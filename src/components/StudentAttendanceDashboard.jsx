@@ -1387,45 +1387,43 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }) {
               <button
                 type="button"
                 onClick={() => setIsStudentDetailModalOpen(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-yellow-400 text-black transition-colors hover:bg-yellow-300"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#ffb300] text-black transition-colors hover:bg-[#e6a100]"
                 aria-label="Close student modal"
               >
                 <span className="text-lg font-bold">×</span>
               </button>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 [scrollbar-width:thin] [scrollbar-color:rgba(7,113,60,0.28)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#07713c]/30 [&::-webkit-scrollbar-thumb]:hover:bg-[#07713c]/40 [&::-webkit-scrollbar-track]:bg-transparent sm:p-5">
-              <section className="rounded-xl border border-[#07713c]/30 bg-white p-4 shadow-sm">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <div className="hidden rounded-lg border-2 border-[#07713c]/30 bg-[#07713c]/10 p-3 text-center">
-                    <p className="text-xs font-medium uppercase tracking-wide text-black">Attendance rate ⭐</p>
-                    <p className="mt-1 text-3xl font-extrabold tabular-nums text-black">{student.attendanceRate}%</p>
-                  </div>
-                  <div className="rounded-lg border border-[#07713c]/30 bg-gray-50/80 p-3">
-                    <p className="text-xs font-medium text-black/85">Total events</p>
-                    <p className="mt-1 text-xl font-bold tabular-nums text-black">{student.totalEvents}</p>
-                  </div>
-                  <div className="rounded-lg border border-[#07713c]/30 bg-gray-50/80 p-3">
-                    <p className="text-xs font-medium text-black/85">Events attended</p>
-                    <p className="mt-1 text-xl font-bold tabular-nums text-black">{student.eventsAttended}</p>
-                  </div>
-                  <div className="rounded-lg border border-[#07713c]/30 bg-gray-50/80 p-3">
-                    <p className="text-xs font-medium text-black/85">Events missed</p>
-                    <p className="mt-1 text-xl font-bold tabular-nums text-black">{student.eventsMissed}</p>
-                  </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="hidden rounded-lg border-2 border-[#07713c]/30 bg-[#07713c]/10 p-3 text-center">
+                  <p className="text-xs font-medium uppercase tracking-wide text-black">Attendance rate ⭐</p>
+                  <p className="mt-1 text-3xl font-extrabold tabular-nums text-black">{student.attendanceRate}%</p>
                 </div>
-                <div className="hidden mt-4">
-                  <div className="mb-1 flex justify-between text-xs text-black">
-                    <span>Progress</span>
-                    <span className="tabular-nums font-medium">{student.attendanceRate}%</span>
-                  </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
-                    <div
-                      className="h-full rounded-full bg-[#07713c] transition-all"
-                      style={{ width: `${Math.min(100, student.attendanceRate)}%` }}
-                    />
-                  </div>
+                <div className="rounded-lg border border-[#07713c]/30 bg-gray-50/80 p-3">
+                  <p className="text-xs font-medium text-black/85">Total events</p>
+                  <p className="mt-1 text-xl font-bold tabular-nums text-black">{student.totalEvents}</p>
                 </div>
-              </section>
+                <div className="rounded-lg border border-[#07713c]/30 bg-gray-50/80 p-3">
+                  <p className="text-xs font-medium text-black/85">Events attended</p>
+                  <p className="mt-1 text-xl font-bold tabular-nums text-black">{student.eventsAttended}</p>
+                </div>
+                <div className="rounded-lg border border-[#07713c]/30 bg-gray-50/80 p-3">
+                  <p className="text-xs font-medium text-black/85">Events missed</p>
+                  <p className="mt-1 text-xl font-bold tabular-nums text-black">{student.eventsMissed}</p>
+                </div>
+              </div>
+              <div className="hidden">
+                <div className="mb-1 flex justify-between text-xs text-black">
+                  <span>Progress</span>
+                  <span className="tabular-nums font-medium">{student.attendanceRate}%</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+                  <div
+                    className="h-full rounded-full bg-[#07713c] transition-all"
+                    style={{ width: `${Math.min(100, student.attendanceRate)}%` }}
+                  />
+                </div>
+              </div>
 
               <section className="min-w-0 rounded-xl border border-[#07713c]/30 bg-white shadow-sm overflow-hidden">
                 <div className="px-4 pt-4 pb-3 border-b border-[#07713c]/20">
