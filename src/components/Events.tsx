@@ -1,694 +1,963 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
-import AddEvent from "./AddEvent";
+import { useEffect, useMemo, useState } from "react";
+import { Chart as ChartJS } from "chart.js/auto";
+import { Pie } from "react-chartjs-2";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
 import SidebarNavIcon from "./SidebarNavIcon";
 import SidebarBrand from "./SidebarBrand";
-import SidebarUserFullName from "./SidebarUserFullName";
 import UserCircleIcon from "./UserCircleIcon";
-import { useGetAllEvents } from "../hooks/useGetAllEvents";
-import { useEditEvent } from "../hooks/useEditEvent";
-import { useDeleteEvent } from "../hooks/useDeleteEvent";
+import SidebarUserFullName from "./SidebarUserFullName";
+import {
+  APP_ROUTES,
+  eventsEventStudentsPath,
+  getAppNavItems,
+} from "../utils/appNav";
+import { getDashboardRoleLabel } from "../utils/roles";
 import { useGovernorScope } from "../hooks/useGovernorScope";
-import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel, isCsgPresident } from "../utils/roles";
+import { useAttendancePageEvents } from "../hooks/useAttendancePageEvents";
+import { fetchAttendancePageEventDetail, useAttendancePageEventDetail } from "../hooks/useAttendancePageEventDetail";
 import { formatEventDateForDisplay, formatSqlTimeForDisplay } from "../hooks/useGetEvents";
-import {
-  formatDurationForEventsList,
-  getEventSessionKindForFilter,
-  resolveEventDurationUi,
-} from "../utils/eventDurationDisplay";
-import {
-  AM_SESSION_TIME_OPTIONS,
-  EVENT_TIME_SELECT_CLASS,
-  GRACE_HOUR_OPTIONS,
-  GRACE_MINUTE_OPTIONS,
-  PM_SESSION_TIME_OPTIONS,
-  formatGraceDurationLabel,
-  graceTotalMinutes,
-  splitGraceTotalMinutes,
-  sqlTimeToSessionSelectValue,
-  twelveHourLabelToSqlTime,
-} from "../utils/eventTimeOptions";
+import { formatDurationForEventsListWithSessionHint } from "../utils/eventDurationDisplay";
+import { formatGraceDurationLabel } from "../utils/eventTimeOptions";
 import { getAudienceScopeLabel } from "../utils/eventAudienceLabel";
-import { getApiErrorMessage } from "../types/api";
-import type { DeskPageProps } from "../types/desk-pages";
-import type { DisplayEvent } from "../types/events";
+import { downloadPdfTable } from "../utils/downloadPdfTable";
+import type {
+  AttendanceEvent,
+  AttendanceStudent,
+  DetailEventMeta,
+  DeskPageProps,
+} from "../types/desk-pages";
 
-type EventsPageProps = DeskPageProps;
-type EventModalMode = "view" | "edit";
-type ViewMode = "list" | "grid";
-type ReportMode = "export" | "settings" | "import";
-type SessionKindFilter = "all" | "whole" | "am" | "pm";
+void ChartJS;
 
-type EditableEvent = DisplayEvent & {
-  fineAmount?: number | string | null;
-  _id?: string | number | null;
-  amTimeIn?: string | null;
-  amTimeOut?: string | null;
-  pmTimeIn?: string | null;
-  pmTimeOut?: string | null;
+/** Default rows per page for the event list table */
+const DEFAULT_EVENT_LIST_PAGE_SIZE = 10;
+const EVENT_LIST_ROWS_PER_PAGE_OPTIONS = [5, 10, 15, 20, 50];
+/** Attendance page content text (excludes green sidebar nav). */
+const ATTENDANCE_TEXT = "text-black";
+const ATTENDANCE_TH_TEXT = "font-bold text-black";
+const TABLE_CELL_NOWRAP = "[&_th]:whitespace-nowrap [&_tbody_td]:whitespace-nowrap";
+const ATTENDANCE_MAJOR_OPTIONS_BY_COURSE: Record<string, readonly string[]> = {
+  BSED: ["English", "Math", "Filipino"],
+  BSBA: ["Financial Management", "Human Resource Development Management", "Marketing Management"],
 };
 
-type EventSchedulePatch = Partial<
-  Pick<
-    EditableEvent,
-    | "am_time_in"
-    | "am_time_out"
-    | "pm_time_in"
-    | "pm_time_out"
-    | "amGraceInMinutes"
-    | "pmGraceInMinutes"
-    | "am_grace_in"
-    | "pm_grace_in"
-    | "amTimeInDisplay"
-    | "amTimeOutDisplay"
-    | "pmTimeInDisplay"
-    | "pmTimeOutDisplay"
-  >
->;
+/** College / course filters — shown when roster includes department data from import. */
+const SHOW_COLLEGE_MAJOR_FILTER_DROPDOWNS = true;
 
-type EventScheduleFields = {
-  amIn: string | null;
-  amOut: string | null;
-  pmIn: string | null;
-  pmOut: string | null;
-  amGraceIn: number | null;
-  pmGraceIn: number | null;
-};
+/** Default fine per absence (₱) — mock only */
+const MOCK_FINE_PER_ABSENCE_PHP = 50;
 
-type EventModalScheduleProps = {
-  ev: EditableEvent;
-  readOnly: boolean;
-  onPatch?: (partial: EventSchedulePatch) => void;
-};
-
-/** Legacy "Half Day" rows → concrete value for session `<select>` (no Half Day option). */
-function durationNormalizedForSessionEdit(ev: DisplayEvent): string {
-  const d = String(ev?.duration ?? "").trim();
-  if (d === "Half Day") {
-    const { sessionFilter } = resolveEventDurationUi(ev);
-    if (sessionFilter === "am_only") return "AM Only";
-    if (sessionFilter === "pm_only") return "PM Only";
-    return "Whole Day";
-  }
-  if (d === "Whole Day" || d === "AM Only" || d === "PM Only") return d;
-  return d || "Whole Day";
+function formatPhp(n: number | string | null | undefined): string {
+  const v = Number(n) || 0;
+  return `₱${v.toLocaleString("en-PH")}`;
 }
 
-const FINE_PER_ABSENT = 50; // Pesos per absent student
-const EVENTS_LIST_PAGE_SIZE = 10;
-/** Grid uses 12 so a 4-column row fills evenly (e.g. 3 full rows). */
-const EVENTS_GRID_PAGE_SIZE = 12;
-
-/** Manage Event main content text (sidebar + top header excluded). */
-const EVENTS_PAGE_TEXT = "text-black";
-const EVENTS_TH_TEXT = "font-bold text-black";
-
-function normStatusKey(status: string | null | undefined): string {
-  const n = String(status ?? "").trim().toLowerCase();
-  if (n === "active" || n === "ongoing") return "ongoing";
-  if (n === "completed") return "completed";
-  if (n === "upcoming") return "upcoming";
-  return n;
+function ratePct(attended: number, total: number): number {
+  if (!total) return 0;
+  return Math.round((attended / total) * 1000) / 10;
 }
 
-/** Completed or ongoing events cannot be edited (only upcoming / not-yet-active rows). */
-function isEventLockedFromEditing(status: string | null | undefined): boolean {
-  const k = normStatusKey(status);
-  return k === "completed" || k === "ongoing";
+function getMockCourse(studentId: string | number | null | undefined): string {
+  const courses = ["BSCS", "BSIT", "BSIS", "BSEMC", "ACT"];
+  const num = Number(String(studentId || "").replace(/\D/g, "")) || 0;
+  return courses[num % courses.length];
 }
 
-/** Label shown in badges (API may still send "Active"). */
-function displayEventStatus(status: string | null | undefined): string {
-  const k = normStatusKey(status);
-  if (k === "ongoing") return "Ongoing";
-  if (k === "completed") return "Completed";
-  if (k === "upcoming") return "Upcoming";
-  return status ? String(status) : "—";
+function getCourse(student: AttendanceStudent | null | undefined): string {
+  if (student?.course) return student.course;
+  return getMockCourse(student?.id);
 }
 
-function getEventStatusClass(status: string | null | undefined): string {
-  const k = normStatusKey(status);
-  if (k === "completed") return "bg-green-100 text-black";
-  if (k === "ongoing") return "bg-orange-100 text-black";
-  if (k === "upcoming") return "bg-blue-100 text-black";
-  return "bg-gray-100 text-black";
+/** Program major when present (API); null if none */
+function getMajor(student: AttendanceStudent | null | undefined): string | null {
+  const m = student?.major;
+  if (m == null || String(m).trim() === "") return null;
+  return String(m).trim();
 }
 
-/** Event modal “Status:” value — bg + border pill (esp. upcoming: blue fill + blue border). */
-function getEventModalStatusBadgeClass(status: string | null | undefined): string {
-  const k = normStatusKey(status);
-  if (k === "completed") return "bg-green-100 text-black border border-green-300";
-  if (k === "ongoing") return "bg-orange-100 text-black border border-orange-300";
-  if (k === "upcoming") return "bg-blue-100 text-black border border-blue-300";
-  return "bg-gray-100 text-black border border-gray-300";
-}
-
-function getDefaultFinesForEvent(ev: DisplayEvent): number | null {
-  if (ev.attRate == null) return null;
-  const reg = Number(ev.reg) || 0;
-  const rate = Number(ev.attRate);
-  if (!Number.isFinite(rate)) return null;
-  const absentCount = Math.round((reg * (100 - rate)) / 100);
-  return Math.max(0, absentCount * FINE_PER_ABSENT);
-}
-
-function finiteGraceMinutes(v: unknown): number | null {
-  if (v == null || v === "") return null;
-  const n = Number(v);
+/** Enrollment year level from API (`yearLevel`); null if missing */
+function getYearLevel(student: AttendanceStudent | null | undefined): number | null {
+  const y = student?.yearLevel ?? student?.year_level;
+  if (y == null || y === "") return null;
+  const n = Number(y);
   return Number.isFinite(n) ? n : null;
 }
 
-/** `YYYY-MM-DD` for `<input type="date" />` from API date string. */
-function eventYmdForDateInput(dateStr: string | null | undefined): string {
-  if (!dateStr) return "";
-  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(dateStr).trim());
-  if (!m) return "";
-  return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
+function getCollegeFromCourse(courseRaw: string | null | undefined): string {
+  const course = String(courseRaw || "").toUpperCase();
+  if (course.startsWith("BEED") || course.startsWith("BSED")) return "College of Education, Arts and Sciences";
+  if (course.startsWith("BSIT")) return "College of Information Technology";
+  if (course.startsWith("BSCRIM")) return "College of Criminal Justice Education";
+  if (course.startsWith("BSHM")) return "College of Hospitality Management";
+  if (course.startsWith("BSBA")) return "College of Business Administration";
+  return "Unassigned";
 }
 
-function applySchedulePatch(prev: EditableEvent, partial: EventSchedulePatch): EditableEvent {
-  const next = { ...prev, ...partial };
-  if ("am_time_in" in partial) next.amTimeInDisplay = formatSqlTimeForDisplay(partial.am_time_in ?? null);
-  if ("am_time_out" in partial) next.amTimeOutDisplay = formatSqlTimeForDisplay(partial.am_time_out ?? null);
-  if ("pm_time_in" in partial) next.pmTimeInDisplay = formatSqlTimeForDisplay(partial.pm_time_in ?? null);
-  if ("pm_time_out" in partial) next.pmTimeOutDisplay = formatSqlTimeForDisplay(partial.pm_time_out ?? null);
-  return next;
+function getStudentDepartmentName(student: AttendanceStudent | null | undefined): string {
+  const fromApi = String(student?.department ?? "").trim();
+  if (fromApi) return fromApi;
+  return getCollegeFromCourse(getCourse(student));
 }
 
-/** Times + grace for modal (fields from API mapper or raw snake_case keys). */
-function getEventScheduleFields(ev: EditableEvent): EventScheduleFields {
-  const amIn = ev.amTimeInDisplay ?? formatSqlTimeForDisplay(ev.am_time_in ?? ev.amTimeIn);
-  const amOut = ev.amTimeOutDisplay ?? formatSqlTimeForDisplay(ev.am_time_out ?? ev.amTimeOut);
-  const pmIn = ev.pmTimeInDisplay ?? formatSqlTimeForDisplay(ev.pm_time_in ?? ev.pmTimeIn);
-  const pmOut = ev.pmTimeOutDisplay ?? formatSqlTimeForDisplay(ev.pm_time_out ?? ev.pmTimeOut);
+function getStudentDepartmentLabel(student: AttendanceStudent | null | undefined): string {
+  const name = getStudentDepartmentName(student);
+  return name && name !== "Unassigned" ? name : "—";
+}
+
+function getCourseWithMajorCode(student: AttendanceStudent | null | undefined): string {
+  const course = String(getCourse(student) || "").toUpperCase();
+  const major = String(getMajor(student) || "").trim().toLowerCase();
+  if (!major) return course;
+
+  if (course === "BSBA") {
+    if (major === "financial management") return "BSBA — FM";
+    if (major === "human resource development management") return "BSBA — HRDM";
+    if (major === "marketing management") return "BSBA — MM";
+  }
+
+  if (course === "BSED") {
+    if (major === "filipino") return "BSED — FIL";
+    if (major === "math") return "BSED — MATH";
+    if (major === "english") return "BSED — ENG";
+  }
+
+  return course;
+}
+
+function getEventSessionType(event: AttendanceEvent | null | undefined): string {
+  return event?.sessionType || "whole_day";
+}
+
+/** Times + late grace from attendance detail API (snake_case) or mapped camelCase. */
+function eventTimingFromDetail(ev: AttendanceEvent | null | undefined) {
+  if (!ev || typeof ev !== "object") return null;
   return {
-    amIn,
-    amOut,
-    pmIn,
-    pmOut,
-    amGraceIn: finiteGraceMinutes(ev.amGraceInMinutes ?? ev.am_grace_in),
-    pmGraceIn: finiteGraceMinutes(ev.pmGraceInMinutes ?? ev.pm_grace_in),
+    amIn: ev.am_time_in ?? ev.amTimeIn ?? null,
+    amOut: ev.am_time_out ?? ev.amTimeOut ?? null,
+    pmIn: ev.pm_time_in ?? ev.pmTimeIn ?? null,
+    pmOut: ev.pm_time_out ?? ev.pmTimeOut ?? null,
+    amGraceIn: ev.am_grace_in ?? ev.amGraceInMinutes ?? null,
+    pmGraceIn: ev.pm_grace_in ?? ev.pmGraceInMinutes ?? null,
   };
 }
 
-function EventModalSchedule({ ev, readOnly, onPatch }: EventModalScheduleProps) {
-  const { sessionFilter } = resolveEventDurationUi(ev);
-  const s = getEventScheduleFields(ev);
-  const hasAmData = s.amIn || s.amOut || s.amGraceIn != null;
-  const hasPmData = s.pmIn || s.pmOut || s.pmGraceIn != null;
-  const showAmBlock = readOnly
-    ? sessionFilter === "whole"
-      ? hasAmData
-      : sessionFilter === "am_only"
-    : sessionFilter === "whole" || sessionFilter === "am_only";
-  const showPmBlock = readOnly
-    ? sessionFilter === "whole"
-      ? hasPmData
-      : sessionFilter === "pm_only"
-    : sessionFilter === "whole" || sessionFilter === "pm_only";
-  const summary =
-    ev.timeSlots != null && String(ev.timeSlots).trim() !== "" ? String(ev.timeSlots).trim() : "";
-
-  const row = (label: string, value: string | null | undefined) => (
-    <div className="border-b border-[#07713c]/10 py-1.5 text-left last:border-0">
-      <span className="block text-black/80">{label}</span>
-      <span className="mt-0.5 block font-medium tabular-nums text-black">{value ?? "—"}</span>
-    </div>
-  );
-
-  const gAmIn = finiteGraceMinutes(ev.amGraceInMinutes ?? ev.am_grace_in);
-  const gPmIn = finiteGraceMinutes(ev.pmGraceInMinutes ?? ev.pm_grace_in);
-
-  if (!readOnly && onPatch) {
-    return (
-      <div>
-        <p className="mb-2 text-xs font-semibold text-black">Time in / out &amp; late threshold</p>
-        <div className="space-y-3">
-          {showAmBlock && (
-            <div className="rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] px-3 py-2">
-              <p className="mb-2 text-xs font-medium text-black">AM Session</p>
-              <div className="space-y-3 text-sm">
-                <div className="grid grid-cols-1 gap-3 text-left sm:grid-cols-2 sm:gap-4">
-                  <div className="flex min-w-0 flex-col gap-3 text-left">
-                    <div className="flex min-w-0 flex-col gap-1.5">
-                      <span className="text-xs font-medium text-black/85">Time in</span>
-                      <select
-                        className={EVENT_TIME_SELECT_CLASS}
-                        value={sqlTimeToSessionSelectValue(ev.am_time_in ?? ev.amTimeIn, "am")}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          onPatch({ am_time_in: v ? twelveHourLabelToSqlTime(v) : null });
-                        }}
-                      >
-                        <option value="">Select time</option>
-                        {AM_SESSION_TIME_OPTIONS.map((timeOption) => (
-                          <option key={`am-in-${timeOption}`} value={timeOption}>
-                            {timeOption}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex min-w-0 flex-col gap-1.5">
-                      <span className="text-xs font-medium text-black/85">Late — time in</span>
-                      <div className="grid w-full min-w-0 grid-cols-2 gap-2">
-                        <div className="min-w-0">
-                          <span className="mb-1 block text-[11px] font-medium text-black/75">Hour(s)</span>
-                          <select
-                            className="w-full min-w-0 cursor-pointer rounded-lg border border-[#07713c]/40 bg-white px-2 py-1.5 text-left text-sm text-black focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15"
-                            value={splitGraceTotalMinutes(gAmIn ?? 0).hours}
-                            onChange={(e) => {
-                              const h = Number(e.target.value);
-                              const { minutes } = splitGraceTotalMinutes(gAmIn ?? 0);
-                              const v = graceTotalMinutes(h, minutes);
-                              onPatch({ amGraceInMinutes: v, am_grace_in: v });
-                            }}
-                          >
-                            {GRACE_HOUR_OPTIONS.map((h) => (
-                              <option key={`edit-am-grace-h-${h}`} value={h}>
-                                {h}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="min-w-0">
-                          <span className="mb-1 block text-[11px] font-medium text-black/75">Minutes</span>
-                          <select
-                            className="w-full min-w-0 cursor-pointer rounded-lg border border-[#07713c]/40 bg-white px-2 py-1.5 text-left text-sm text-black focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15"
-                            value={splitGraceTotalMinutes(gAmIn ?? 0).minutes}
-                            onChange={(e) => {
-                              const m = Number(e.target.value);
-                              const { hours } = splitGraceTotalMinutes(gAmIn ?? 0);
-                              const v = graceTotalMinutes(hours, m);
-                              onPatch({ amGraceInMinutes: v, am_grace_in: v });
-                            }}
-                          >
-                            {GRACE_MINUTE_OPTIONS.map((m) => (
-                              <option key={`edit-am-grace-m-${m}`} value={m}>
-                                {String(m).padStart(2, "0")}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex w-full min-w-0 flex-col gap-1.5 text-left">
-                    <span className="text-xs font-medium text-black/85">Time out</span>
-                    <select
-                      className={EVENT_TIME_SELECT_CLASS}
-                      value={sqlTimeToSessionSelectValue(ev.am_time_out ?? ev.amTimeOut, "am")}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        onPatch({ am_time_out: v ? twelveHourLabelToSqlTime(v) : null });
-                      }}
-                    >
-                      <option value="">Select time</option>
-                      {AM_SESSION_TIME_OPTIONS.map((timeOption) => (
-                        <option key={`am-out-${timeOption}`} value={timeOption}>
-                          {timeOption}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          {showPmBlock && (
-            <div className="rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] px-3 py-2">
-              <p className="mb-2 text-xs font-medium text-black">PM Session</p>
-              <div className="space-y-3 text-sm">
-                <div className="grid grid-cols-1 gap-3 text-left sm:grid-cols-2 sm:gap-4">
-                  <div className="flex min-w-0 flex-col gap-3 text-left">
-                    <div className="flex min-w-0 flex-col gap-1.5">
-                      <span className="text-xs font-medium text-black/85">Time in</span>
-                      <select
-                        className={EVENT_TIME_SELECT_CLASS}
-                        value={sqlTimeToSessionSelectValue(ev.pm_time_in ?? ev.pmTimeIn, "pm")}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          onPatch({ pm_time_in: v ? twelveHourLabelToSqlTime(v) : null });
-                        }}
-                      >
-                        <option value="">Select time</option>
-                        {PM_SESSION_TIME_OPTIONS.map((timeOption) => (
-                          <option key={`pm-in-${timeOption}`} value={timeOption}>
-                            {timeOption}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex min-w-0 flex-col gap-1.5">
-                      <span className="text-xs font-medium text-black/85">Late — time in</span>
-                      <div className="grid w-full min-w-0 grid-cols-2 gap-2">
-                        <div className="min-w-0">
-                          <span className="mb-1 block text-[11px] font-medium text-black/75">Hour(s)</span>
-                          <select
-                            className="w-full min-w-0 cursor-pointer rounded-lg border border-[#07713c]/40 bg-white px-2 py-1.5 text-left text-sm text-black focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15"
-                            value={splitGraceTotalMinutes(gPmIn ?? 0).hours}
-                            onChange={(e) => {
-                              const h = Number(e.target.value);
-                              const { minutes } = splitGraceTotalMinutes(gPmIn ?? 0);
-                              const v = graceTotalMinutes(h, minutes);
-                              onPatch({ pmGraceInMinutes: v, pm_grace_in: v });
-                            }}
-                          >
-                            {GRACE_HOUR_OPTIONS.map((h) => (
-                              <option key={`edit-pm-grace-h-${h}`} value={h}>
-                                {h}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="min-w-0">
-                          <span className="mb-1 block text-[11px] font-medium text-black/75">Minutes</span>
-                          <select
-                            className="w-full min-w-0 cursor-pointer rounded-lg border border-[#07713c]/40 bg-white px-2 py-1.5 text-left text-sm text-black focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15"
-                            value={splitGraceTotalMinutes(gPmIn ?? 0).minutes}
-                            onChange={(e) => {
-                              const m = Number(e.target.value);
-                              const { hours } = splitGraceTotalMinutes(gPmIn ?? 0);
-                              const v = graceTotalMinutes(hours, m);
-                              onPatch({ pmGraceInMinutes: v, pm_grace_in: v });
-                            }}
-                          >
-                            {GRACE_MINUTE_OPTIONS.map((m) => (
-                              <option key={`edit-pm-grace-m-${m}`} value={m}>
-                                {String(m).padStart(2, "0")}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex w-full min-w-0 flex-col gap-1.5 text-left">
-                    <span className="text-xs font-medium text-black/85">Time out</span>
-                    <select
-                      className={EVENT_TIME_SELECT_CLASS}
-                      value={sqlTimeToSessionSelectValue(ev.pm_time_out ?? ev.pmTimeOut, "pm")}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        onPatch({ pm_time_out: v ? twelveHourLabelToSqlTime(v) : null });
-                      }}
-                    >
-                      <option value="">Select time</option>
-                      {PM_SESSION_TIME_OPTIONS.map((timeOption) => (
-                        <option key={`pm-out-${timeOption}`} value={timeOption}>
-                          {timeOption}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (!showAmBlock && !showPmBlock) {
-    return (
-      <div>
-        <label className="mb-1 block text-xs font-semibold text-black">Time in / out & late threshold</label>
-        <p className="min-h-[2.5rem] rounded-lg border border-[#07713c]/30 bg-[#07713c]/5 px-3 py-2 text-sm text-black">
-          {summary || "—"}
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <p className="mb-2 text-xs font-semibold text-black">Time in / out & late threshold</p>
-      <div className="space-y-3">
-        {showAmBlock && (
-          <div className="rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] px-3 py-2">
-            <p className="mb-2 text-xs font-medium text-black">AM Session</p>
-            <div className="text-sm">
-              {row("Time in", s.amIn)}
-              {row("Time out", s.amOut)}
-              {row(
-                "Late — time in",
-                s.amGraceIn != null ? formatGraceDurationLabel(s.amGraceIn) : null,
-              )}
-            </div>
-          </div>
-        )}
-        {showPmBlock && (
-          <div className="rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] px-3 py-2">
-            <p className="mb-2 text-xs font-medium text-black">PM Session</p>
-            <div className="text-sm">
-              {row("Time in", s.pmIn)}
-              {row("Time out", s.pmOut)}
-              {row(
-                "Late — time in",
-                s.pmGraceIn != null ? formatGraceDurationLabel(s.pmGraceIn) : null,
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+function sessionRangeLabel(startRaw: string | null | undefined, endRaw: string | null | undefined): string | null {
+  const start = formatSqlTimeForDisplay(startRaw);
+  const end = formatSqlTimeForDisplay(endRaw);
+  if (!start && !end) return null;
+  return `${start ?? "—"}–${end ?? "—"}`;
 }
+
+function eventAudienceNotesLabel(ev: AttendanceEvent | null | undefined): string {
+  const raw = ev?.audience_notes ?? ev?.audienceNotes;
+  if (raw == null || String(raw).trim() === "") return "—";
+  return String(raw).trim();
+}
+
+function getStudentSessionRecord(student: AttendanceStudent | null | undefined, event: AttendanceEvent | null | undefined) {
+  const sessionType = getEventSessionType(event);
+  const hasAmSession = sessionType === "whole_day" || sessionType === "am";
+  const hasPmSession = sessionType === "whole_day" || sessionType === "pm";
+  if (event?.status === "upcoming") {
+    return {
+      amIn: hasAmSession ? "No record" : "—",
+      amOut: hasAmSession ? "No record" : "—",
+      pmIn: hasPmSession ? "No record" : "—",
+      pmOut: hasPmSession ? "No record" : "—",
+      penalty: 0,
+    };
+  }
+  if (student?.fromServer) {
+    return {
+      amIn: student.amIn ?? "No record",
+      amOut: student.amOut ?? "No record",
+      pmIn: student.pmIn ?? "No record",
+      pmOut: student.pmOut ?? "No record",
+      penalty: Number(student.penalty ?? student.finePhp) || 0,
+    };
+  }
+  const idNum = Number(String(student?.id || "").replace(/\D/g, "")) || 0;
+  const isPresent = student?.status === "attended";
+  const hasAmIn = isPresent && idNum % 7 !== 0;
+  const hasAmOut = isPresent && idNum % 5 !== 0;
+  const hasPmIn = isPresent && idNum % 6 !== 0;
+  const hasPmOut = isPresent && idNum % 4 !== 0;
+  const checks = [
+    hasAmSession ? hasAmIn : true,
+    hasAmSession ? hasAmOut : true,
+    hasPmSession ? hasPmIn : true,
+    hasPmSession ? hasPmOut : true,
+  ];
+  const missingCount = checks.filter((v) => !v).length;
+  const baseFine = Number(event?.finePerAbsence) || MOCK_FINE_PER_ABSENCE_PHP;
+  const penalty = missingCount === 0 ? 0 : baseFine * missingCount;
+  return {
+    amIn: hasAmSession ? (hasAmIn ? "6:05 AM" : "No record") : "—",
+    amOut: hasAmSession ? (hasAmOut ? "11:40 AM" : "No record") : "—",
+    pmIn: hasPmSession ? (hasPmIn ? "1:05 PM" : "No record") : "—",
+    pmOut: hasPmSession ? (hasPmOut ? "5:00 PM" : "No record") : "—",
+    penalty,
+  };
+}
+
+function eventTotalFine(ev: AttendanceEvent | null | undefined): number {
+  const f = ev?.finePerAbsence ?? MOCK_FINE_PER_ABSENCE_PHP;
+  return (ev?.absent || 0) * f;
+}
+
+/** Attendance page API may send `audiences` as JSON array or string — normalize for {@link getAudienceScopeLabel}. */
+function normalizeAttendanceAudiences(raw: unknown): unknown[] {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return [];
+    try {
+      const p = JSON.parse(s);
+      return Array.isArray(p) ? p : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function attendanceEventListAudienceLabel(ev: AttendanceEvent | null | undefined): string {
+  if (!ev) return "—";
+  const instituteWide =
+    ev.isAllDepartments === true ||
+    ev.is_all_departments === true ||
+    Number(ev.is_all_departments) === 1;
+  return getAudienceScopeLabel({
+    ...ev,
+    audiences: normalizeAttendanceAudiences(ev.audiences),
+    isAllDepartments: instituteWide,
+    is_all_departments: instituteWide ? 1 : 0,
+  });
+}
+
+function downloadTextFile(filename: string, text: string, mime = "text/csv;charset=utf-8"): void {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+type EventsPageProps = DeskPageProps;
 
 export default function Events({ onLogout, onNavigate }: EventsPageProps) {
-  const { data: apiEvents = [], isPending: isEventsLoading, isError: isEventsError } =
-    useGetAllEvents();
-  const editEventMutation = useEditEvent();
-  const deleteEventMutation = useDeleteEvent();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { eventId } = useParams();
   const { role, isGovernor, governorScope } = useGovernorScope();
-  const [showLogout, setShowLogout] = useState(false);
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportMode] = useState<ReportMode>("export");
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("All Status");
-  const [sessionKindFilter, setSessionKindFilter] = useState<SessionKindFilter>("all");
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
-  const [showAddEvent, setShowAddEvent] = useState(false);
-  const [selectedEvent, setSelectedEvent] = useState<DisplayEvent | null>(null);
-  const [editableEvent, setEditableEvent] = useState<EditableEvent | null>(null);
-  /** 'view' = read-only modal; 'edit' = editable (frontend only until API exists) */
-  const [eventModalMode, setEventModalMode] = useState<EventModalMode>("edit");
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [editSaveError, setEditSaveError] = useState<string | null>(null);
-  const [showEditNotAllowedModal, setShowEditNotAllowedModal] = useState(false);
-  const [editNotAllowedEventLabel, setEditNotAllowedEventLabel] = useState("");
-  const [eventsPage, setEventsPage] = useState(1);
-  const activeNav = "events";
-  const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
-  const isCsgRole = isCsgPresident(role);
+  void getDashboardRoleLabel(isGovernor, governorScope, role);
   const isAdmin = String(role || "").toLowerCase().trim() === "admin";
-  /** Admins and department governors can create and edit events */
-  const canManageEvents = isAdmin || isGovernor || isCsgRole;
-  /**
-   * Display amount for the Fines column — never 0 (uses {@link FINE_PER_ABSENT} as minimum).
-   */
-  const getFinesForEvent = (ev: DisplayEvent): number => {
-    if (ev.attRate != null) {
-      const computed = getDefaultFinesForEvent(ev);
-      if (computed != null) {
-        return computed <= 0 ? FINE_PER_ABSENT : computed;
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [showLogout, setShowLogout] = useState(false);
+  const [detailEventId, setDetailEventId] = useState<string | null>(null);
+
+  const {
+    data: pageData,
+    isLoading: isPageLoading,
+    isError: isPageError,
+    refetch: refetchAttendancePage,
+  } = useAttendancePageEvents();
+
+  const { data: detailFromApi } = useAttendancePageEventDetail(detailEventId ?? "", {
+    enabled: Boolean(detailEventId),
+  });
+  const events: AttendanceEvent[] =
+    (pageData as { events?: AttendanceEvent[] } | undefined)?.events ?? [];
+  const [exportOpen, setExportOpen] = useState(false);
+  const [eventListPage, setEventListPage] = useState(1);
+  const [eventListPageSize, setEventListPageSize] = useState(DEFAULT_EVENT_LIST_PAGE_SIZE);
+  const [studentListSearch, setStudentListSearch] = useState("");
+  const [studentListCollege, setStudentListCollege] = useState("all");
+  const [studentListCourse, setStudentListCourse] = useState("all");
+  const [studentListMajor, setStudentListMajor] = useState("all");
+  const [studentListYearLevel, setStudentListYearLevel] = useState("all");
+  const [studentListAttendance, setStudentListAttendance] = useState("all");
+  const [exportEventSearch, setExportEventSearch] = useState("");
+  const [exportEventCollege, setExportEventCollege] = useState("all");
+  const [exportEventCourse, setExportEventCourse] = useState("all");
+  const [exportEventMajor, setExportEventMajor] = useState("all");
+  const [exportEventYearLevel, setExportEventYearLevel] = useState("all");
+  const [exportEventAttendance, setExportEventAttendance] = useState("all");
+  const [exportAllEventId, setExportAllEventId] = useState("all");
+  const [exportAllEventStatus, setExportAllEventStatus] = useState("all");
+  const [exportAllCollege, setExportAllCollege] = useState("all");
+  const [exportAllCourse, setExportAllCourse] = useState("all");
+  const [studentListPageSize, setStudentListPageSize] = useState(10);
+  const [studentListPage, setStudentListPage] = useState(1);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const isStudentListPath = Boolean(detailEventId) && location.pathname.endsWith("/students");
+  const exportEventDetailId = exportAllEventId === "all" ? null : exportAllEventId;
+  const { data: exportDetailFromApi } = useAttendancePageEventDetail(exportEventDetailId ?? "", {
+    enabled: Boolean(exportEventDetailId),
+  });
+
+  useEffect(() => {
+    setDetailEventId(eventId || null);
+  }, [eventId]);
+
+  useEffect(() => {
+    if (!eventId) return;
+    if (!location.pathname.endsWith("/students")) {
+      navigate(eventsEventStudentsPath(eventId), { replace: true });
+    }
+  }, [eventId, location.pathname, navigate]);
+
+  useEffect(() => {
+    setSelectedStudentId(null);
+  }, [detailEventId]);
+
+  const filtered = useMemo(() => {
+    return events.filter((ev) => {
+      if (statusFilter !== "all" && ev.status !== statusFilter) return false;
+      const q = search.trim().toLowerCase();
+      if (q) {
+        const nameOk = String(ev.name).toLowerCase().includes(q);
+        const audienceOk = attendanceEventListAudienceLabel(ev).toLowerCase().includes(q);
+        if (!nameOk && !audienceOk) return false;
+      }
+      return true;
+    });
+  }, [events, statusFilter, search]);
+
+  const eventsTotal = filtered.length;
+  const eventsTotalPages = Math.max(1, Math.ceil(eventsTotal / eventListPageSize) || 1);
+  const eventsPageSafe = Math.min(eventListPage, eventsTotalPages);
+
+  const paginatedFiltered = useMemo(() => {
+    const start = (eventsPageSafe - 1) * eventListPageSize;
+    return filtered.slice(start, start + eventListPageSize);
+  }, [filtered, eventsPageSafe, eventListPageSize]);
+
+  useEffect(() => {
+    setEventListPage(1);
+  }, [search, statusFilter, eventListPageSize]);
+
+  useEffect(() => {
+    setEventListPage((p) => Math.min(p, eventsTotalPages));
+  }, [eventsTotalPages]);
+
+  const detailEvent = useMemo((): AttendanceEvent | null => {
+    if (!detailEventId) return null;
+    if (detailFromApi) return detailFromApi as AttendanceEvent;
+    return (events.find((e: AttendanceEvent) => String(e.id) === String(detailEventId)) ?? null) as AttendanceEvent | null;
+  }, [detailEventId, detailFromApi, events]);
+
+  const detailEventMeta = useMemo((): DetailEventMeta | null => {
+    if (!detailEvent) return null;
+    const sessionType = getEventSessionType(detailEvent);
+    const hasAmSession = sessionType === "whole_day" || sessionType === "am";
+        const hasPmSession = sessionType === "whole_day" || sessionType === "pm";
+        const timing = eventTimingFromDetail(detailEvent);
+        const amRange = hasAmSession && timing ? sessionRangeLabel(timing.amIn, timing.amOut) : null;
+        const pmRange = hasPmSession && timing ? sessionRangeLabel(timing.pmIn, timing.pmOut) : null;
+
+        const rawAmG = timing?.amGraceIn;
+        const rawPmG = timing?.pmGraceIn;
+        const lateAmIn =
+          hasAmSession && rawAmG != null && rawAmG !== "" && Number.isFinite(Number(rawAmG))
+            ? Math.max(0, Number(rawAmG))
+            : null;
+        const latePmIn =
+          hasPmSession && rawPmG != null && rawPmG !== "" && Number.isFinite(Number(rawPmG))
+            ? Math.max(0, Number(rawPmG))
+            : null;
+
+        const scheduleAm =
+          amRange && lateAmIn != null
+            ? `${amRange} (late in ${formatGraceDurationLabel(lateAmIn)})`
+            : amRange;
+        const schedulePm =
+          pmRange && latePmIn != null
+            ? `${pmRange} (late in ${formatGraceDurationLabel(latePmIn)})`
+            : pmRange;
+
+        return {
+          sessionType,
+          hasAmSession,
+          hasPmSession,
+          type: "Mandatory",
+          requiresRegistration: "No",
+          audience: getAudienceScopeLabel(detailEvent),
+          duration: formatDurationForEventsListWithSessionHint(detailEvent),
+          scheduleAmRange: amRange,
+          schedulePmRange: pmRange,
+          scheduleAm,
+          schedulePm,
+          lateAmIn,
+          latePmIn,
+          notes: eventAudienceNotesLabel(detailEvent),
+        };
+  }, [detailEvent]);
+
+  const filteredStudentList = useMemo(() => {
+    if (!detailEvent) return [];
+    const q = studentListSearch.trim().toLowerCase();
+    return (detailEvent.students || []).filter((s) => {
+      const sid = String(s.id || "").toLowerCase();
+      const name = String(s.name || "").toLowerCase();
+      const course = getCourse(s);
+      const college = getStudentDepartmentName(s);
+      const majorLabel = getMajor(s);
+      const majorQ = (majorLabel || "").toLowerCase();
+      const attendance = detailEvent.status === "upcoming" ? "no_record" : s.status === "attended" ? "attended" : "absent";
+      const yearLevel = getYearLevel(s);
+      const yearLevelQ = yearLevel != null ? String(yearLevel) : "";
+      if (
+        q &&
+        !sid.includes(q) &&
+        !name.includes(q) &&
+        !course.toLowerCase().includes(q) &&
+        !majorQ.includes(q) &&
+        !college.toLowerCase().includes(q) &&
+        !(yearLevelQ && yearLevelQ.includes(q))
+      ) {
+        return false;
+      }
+      if (studentListCollege !== "all" && college !== studentListCollege) return false;
+      if (studentListCourse !== "all" && course !== studentListCourse) return false;
+      if (studentListMajor !== "all") {
+        if (!majorLabel || majorLabel !== studentListMajor) return false;
+      }
+      if (studentListYearLevel !== "all") {
+        const want = Number(studentListYearLevel);
+        if (!Number.isFinite(want) || yearLevel !== want) return false;
+      }
+      if (
+        detailEvent.status !== "upcoming" &&
+        studentListAttendance !== "all" &&
+        attendance !== studentListAttendance
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [
+    detailEvent,
+    studentListSearch,
+    studentListCollege,
+    studentListCourse,
+    studentListMajor,
+    studentListYearLevel,
+    studentListAttendance,
+  ]);
+
+  const studentListYearLevelOptions = useMemo(() => {
+    if (!detailEvent) return [];
+    const set = new Set<number>();
+    for (const s of detailEvent.students || []) {
+      const yl = getYearLevel(s);
+      if (yl != null) set.add(yl);
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }, [detailEvent]);
+
+  const studentListCollegeOptions = useMemo(() => {
+    if (!detailEvent) return [];
+    const set = new Set<string>();
+    for (const s of detailEvent.students || []) {
+      const dept = getStudentDepartmentName(s);
+      if (dept && dept !== "Unassigned") set.add(dept);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [detailEvent]);
+
+  const studentListCourses = useMemo(() => {
+    if (!detailEvent) return [];
+    const courses = Array.from(new Set((detailEvent.students || []).map((s) => getCourse(s)))).sort();
+    if (studentListCollege === "all") return courses;
+    return courses.filter((c) => getCollegeFromCourse(c) === studentListCollege);
+  }, [detailEvent, studentListCollege]);
+
+  const studentListMajorOptions = useMemo(() => {
+    if (!detailEvent) return [];
+    const selectedCourse = String(studentListCourse || "").toUpperCase();
+    if (selectedCourse && selectedCourse !== "ALL" && ATTENDANCE_MAJOR_OPTIONS_BY_COURSE[selectedCourse]) {
+      return ATTENDANCE_MAJOR_OPTIONS_BY_COURSE[selectedCourse];
+    }
+    const set = new Set<string>();
+    const studentsScoped =
+      studentListCollege === "all"
+        ? detailEvent.students || []
+        : (detailEvent.students || []).filter((s) => getStudentDepartmentName(s) === studentListCollege);
+    for (const s of studentsScoped) {
+      const m = getMajor(s);
+      if (m) set.add(m);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [detailEvent, studentListCourse, studentListCollege]);
+
+  const showStudentListMajorFilter =
+    SHOW_COLLEGE_MAJOR_FILTER_DROPDOWNS && studentListMajorOptions.length > 0;
+
+  const exportEventCourses = useMemo(() => {
+    if (!detailEvent) return [];
+    const courses = Array.from(new Set((detailEvent.students || []).map((s) => getCourse(s)))).sort();
+    if (exportEventCollege === "all") return courses;
+    return courses.filter((c) => getCollegeFromCourse(c) === exportEventCollege);
+  }, [detailEvent, exportEventCollege]);
+
+  const exportEventMajorOptions = useMemo(() => {
+    if (!detailEvent) return [];
+    const selectedCourse = String(exportEventCourse || "").toUpperCase();
+    if (selectedCourse && selectedCourse !== "ALL" && ATTENDANCE_MAJOR_OPTIONS_BY_COURSE[selectedCourse]) {
+      return ATTENDANCE_MAJOR_OPTIONS_BY_COURSE[selectedCourse];
+    }
+    const set = new Set<string>();
+    const studentsScoped =
+      exportEventCollege === "all"
+        ? detailEvent.students || []
+        : (detailEvent.students || []).filter((s) => getStudentDepartmentName(s) === exportEventCollege);
+    for (const s of studentsScoped) {
+      const m = getMajor(s);
+      if (m) set.add(m);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [detailEvent, exportEventCourse, exportEventCollege]);
+
+  const exportFilteredEventStudents = useMemo(() => {
+    if (!detailEvent) return [];
+    const q = exportEventSearch.trim().toLowerCase();
+    return (detailEvent.students || []).filter((s) => {
+      const sid = String(s.id || "").toLowerCase();
+      const name = String(s.name || "").toLowerCase();
+      const course = getCourse(s);
+      const college = getStudentDepartmentName(s);
+      const majorLabel = getMajor(s);
+      const majorQ = (majorLabel || "").toLowerCase();
+      const ylExport = getYearLevel(s);
+      const yearLevelQ = ylExport != null ? String(ylExport) : "";
+      const attendance = detailEvent.status === "upcoming" ? "no_record" : s.status === "attended" ? "attended" : "absent";
+
+      if (
+        q &&
+        !sid.includes(q) &&
+        !name.includes(q) &&
+        !course.toLowerCase().includes(q) &&
+        !majorQ.includes(q) &&
+        !college.toLowerCase().includes(q) &&
+        !(yearLevelQ && yearLevelQ.includes(q))
+      ) {
+        return false;
+      }
+      if (exportEventCollege !== "all" && college !== exportEventCollege) return false;
+      if (exportEventCourse !== "all" && course !== exportEventCourse) return false;
+      if (exportEventMajor !== "all") {
+        if (!majorLabel || majorLabel !== exportEventMajor) return false;
+      }
+      if (exportEventYearLevel !== "all") {
+        const want = Number(exportEventYearLevel);
+        const yl = getYearLevel(s);
+        if (!Number.isFinite(want) || yl !== want) return false;
+      }
+      if (
+        detailEvent.status !== "upcoming" &&
+        exportEventAttendance !== "all" &&
+        attendance !== exportEventAttendance
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [
+    detailEvent,
+    exportEventSearch,
+    exportEventCollege,
+    exportEventCourse,
+    exportEventMajor,
+    exportEventYearLevel,
+    exportEventAttendance,
+  ]);
+
+  const studentListTotal = filteredStudentList.length;
+  const studentListTotalPages = Math.max(1, Math.ceil(studentListTotal / studentListPageSize) || 1);
+  const studentListPageSafe = Math.min(studentListPage, studentListTotalPages);
+  const visibleStudentRows = useMemo(() => {
+    const start = (studentListPageSafe - 1) * studentListPageSize;
+    return filteredStudentList.slice(start, start + studentListPageSize);
+  }, [filteredStudentList, studentListPageSafe, studentListPageSize]);
+
+  useEffect(() => {
+    setStudentListCollege("all");
+    setStudentListMajor("all");
+    setStudentListYearLevel("all");
+  }, [detailEventId]);
+
+  useEffect(() => {
+    if (studentListYearLevel === "all") return;
+    if (!studentListYearLevelOptions.includes(Number(studentListYearLevel))) {
+      setStudentListYearLevel("all");
+    }
+  }, [studentListYearLevel, studentListYearLevelOptions]);
+
+  useEffect(() => {
+    if (studentListMajor === "all") return;
+    if (!studentListMajorOptions.includes(studentListMajor)) {
+      setStudentListMajor("all");
+    }
+  }, [studentListMajor, studentListMajorOptions]);
+
+  useEffect(() => {
+    if (studentListCourse === "all") return;
+    if (!studentListCourses.includes(studentListCourse)) {
+      setStudentListCourse("all");
+    }
+  }, [studentListCourse, studentListCourses]);
+
+  useEffect(() => {
+    setStudentListPage(1);
+  }, [
+    studentListSearch,
+    studentListCollege,
+    studentListCourse,
+    studentListMajor,
+    studentListYearLevel,
+    studentListAttendance,
+    studentListPageSize,
+    detailEventId,
+  ]);
+
+  useEffect(() => {
+    setStudentListPage((p) => Math.min(p, studentListTotalPages));
+  }, [studentListTotalPages]);
+
+  useEffect(() => {
+    if (!exportOpen || !detailEvent) return;
+    setExportEventSearch(studentListSearch);
+    setExportEventCollege(studentListCollege);
+    setExportEventCourse(studentListCourse);
+    setExportEventMajor(studentListMajor);
+    setExportEventYearLevel(studentListYearLevel);
+    setExportEventAttendance(studentListAttendance);
+  }, [
+    exportOpen,
+    detailEvent,
+    studentListSearch,
+    studentListCollege,
+    studentListCourse,
+    studentListMajor,
+    studentListYearLevel,
+    studentListAttendance,
+  ]);
+
+  useEffect(() => {
+    if (exportEventYearLevel === "all") return;
+    if (!studentListYearLevelOptions.includes(Number(exportEventYearLevel))) {
+      setExportEventYearLevel("all");
+    }
+  }, [exportEventYearLevel, studentListYearLevelOptions]);
+
+  useEffect(() => {
+    if (exportEventMajor === "all") return;
+    if (!exportEventMajorOptions.includes(exportEventMajor)) {
+      setExportEventMajor("all");
+    }
+  }, [exportEventMajor, exportEventMajorOptions]);
+
+  useEffect(() => {
+    if (exportEventCourse === "all") return;
+    if (!exportEventCourses.includes(exportEventCourse)) {
+      setExportEventCourse("all");
+    }
+  }, [exportEventCourse, exportEventCourses]);
+
+  const exportAllCollegeOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const ev of events) {
+      for (const s of ev.students || []) {
+        const dept = getStudentDepartmentName(s);
+      if (dept && dept !== "Unassigned") set.add(dept);
       }
     }
-    if (ev.fine != null && ev.fine !== "") {
-      const n = Number(ev.fine);
-      if (Number.isFinite(n)) {
-        const v = Math.max(0, n);
-        return v <= 0 ? FINE_PER_ABSENT : v;
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [events]);
+
+  const exportAllCourseOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const ev of events) {
+      for (const s of ev.students || []) {
+        const course = getCourseWithMajorCode(s);
+        if (exportAllCollege === "all" || getStudentDepartmentName(s) === exportAllCollege) {
+          set.add(course);
+        }
       }
     }
-    return FINE_PER_ABSENT;
-  };
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [events, exportAllCollege]);
+
+  const exportCompletedEventOptions = useMemo(
+    () => events.filter((ev) => ev.status === "completed"),
+    [events],
+  );
+
+  const exportAllFilteredRows = useMemo(() => {
+    const rows = [];
+    for (const ev of events) {
+      if (exportAllEventId !== "all" && String(ev.id) !== String(exportAllEventId)) continue;
+      if (exportAllEventStatus !== "all" && ev.status !== exportAllEventStatus) continue;
+      const scopedStudents =
+        exportEventDetailId && String(ev.id) === String(exportEventDetailId)
+          ? (exportDetailFromApi as AttendanceEvent | undefined)?.students || ev.students || []
+          : ev.students || [];
+      for (const s of scopedStudents) {
+        const course = getCourseWithMajorCode(s);
+        const college = getStudentDepartmentName(s);
+        if (exportAllCollege !== "all" && college !== exportAllCollege) continue;
+        if (exportAllCourse !== "all" && course !== exportAllCourse) continue;
+        const attendance = ev.status === "upcoming" ? "no_record" : s.status === "attended" ? "attended" : "absent";
+        rows.push({ ev, s, course, college, attendance });
+      }
+    }
+    return rows;
+  }, [events, exportAllEventId, exportAllEventStatus, exportAllCollege, exportAllCourse, exportEventDetailId, exportDetailFromApi]);
+
+  useEffect(() => {
+    if (exportAllCourse === "all") return;
+    if (!exportAllCourseOptions.includes(exportAllCourse)) {
+      setExportAllCourse("all");
+    }
+  }, [exportAllCourse, exportAllCourseOptions]);
+
+  useEffect(() => {
+    if (exportAllEventId === "all") return;
+    const stillExists = exportCompletedEventOptions.some((ev) => String(ev.id) === String(exportAllEventId));
+    if (!stillExists) {
+      setExportAllEventId("all");
+    }
+  }, [exportAllEventId, exportCompletedEventOptions]);
 
   const navItems = getAppNavItems({ isAdmin });
 
 
-  /** Live events from API only. */
-  const allEvents = useMemo(() => [...apiEvents], [apiEvents]);
+  const handleNav = (itemId: string) => {
+    onNavigate?.(itemId);
+  };
 
-  const openEventModal = (ev: DisplayEvent, mode: EventModalMode = "edit") => {
-    setEditSaveError(null);
-    setSelectedEvent(ev);
-    const wantEdit = mode === "edit" && !isEventLockedFromEditing(ev.status);
-    const openEdit = canManageEvents && wantEdit;
-    setEditableEvent(() => {
-      if (!openEdit) return { ...ev };
-      const duration = durationNormalizedForSessionEdit(ev);
-      let fine = ev.fine;
-      if (fine == null || fine === "") {
-        fine = getFinesForEvent(ev);
-      } else {
-        const n = Number(fine);
-        fine = Number.isFinite(n) ? n : getFinesForEvent(ev);
-      }
-      return { ...ev, duration, fine, fineAmount: fine };
+  const openEventDetails = (id: string | number | null | undefined) => {
+    if (!id) return;
+    navigate(eventsEventStudentsPath(id));
+  };
+
+  const openEventStudents = (id: string | number | null | undefined) => {
+    openEventDetails(id);
+  };
+
+  const closeEventDetails = () => {
+    navigate(APP_ROUTES.events);
+  };
+
+  const exportCsvAll = async () => {
+    const selectedEvents = events.filter((ev) => {
+      if (exportAllEventId !== "all" && String(ev.id) !== String(exportAllEventId)) return false;
+      if (exportAllEventStatus !== "all" && ev.status !== exportAllEventStatus) return false;
+      return true;
     });
-    setEventModalMode(!canManageEvents || !wantEdit ? "view" : "edit");
-  };
-
-  const closeEventModal = () => {
-    setSelectedEvent(null);
-    setEditableEvent(null);
-    setEditSaveError(null);
-    setEventModalMode("edit");
-  };
-
-  const handleDeleteSelectedEvent = () => {
-    if (!canManageEvents) return;
-    if (!selectedEvent) return;
-    setDeleteError(null);
-    const eventId = selectedEvent.id ?? (selectedEvent as EditableEvent)._id;
-    if (eventId == null || String(eventId).trim() === "") {
-      setDeleteError("Missing event id.");
-      return;
+    const detailedEvents: AttendanceEvent[] = await Promise.all(
+      selectedEvents.map(async (ev): Promise<AttendanceEvent> => {
+        const id = ev.id;
+        if (id == null) return ev;
+        try {
+          const full = await fetchAttendancePageEventDetail(id);
+          return (full as AttendanceEvent | null) || ev;
+        } catch {
+          return ev;
+        }
+      }),
+    );
+    const header = [
+      "Event",
+      "Date",
+      "Event Status",
+      "Student ID",
+      "Student Name",
+      "Department",
+      "Course",
+      "Major",
+      "Year Level",
+      "Attendance",
+      "Fine PHP",
+    ];
+    const rows = [];
+    for (const ev of detailedEvents) {
+      for (const s of ev.students || []) {
+        const course = getCourseWithMajorCode(s);
+        const college = getStudentDepartmentName(s);
+        if (exportAllCollege !== "all" && college !== exportAllCollege) continue;
+        if (exportAllCourse !== "all" && course !== exportAllCourse) continue;
+        const attendance = ev.status === "upcoming" ? "no_record" : s.status === "attended" ? "attended" : "absent";
+        const yl = getYearLevel(s);
+        rows.push([
+          `"${String(ev.name || "").replace(/"/g, '""')}"`,
+          ev.date,
+          ev.status,
+          `"${String(s.id || "").replace(/"/g, '""')}"`,
+          `"${String(s.name || "").replace(/"/g, '""')}"`,
+          `"${String(college).replace(/"/g, '""')}"`,
+          `"${String(course).replace(/"/g, '""')}"`,
+          `"${String(getMajor(s) || "—").replace(/"/g, '""')}"`,
+          yl != null ? yl : "—",
+          attendance === "no_record" ? "No record" : attendance,
+          Number(s.finePhp) || 0,
+        ]);
+      }
     }
-
-    deleteEventMutation.mutate(
-      { id: eventId },
-      {
-        onSuccess: () => {
-          setShowDeleteConfirm(false);
-          closeEventModal();
-          setDeleteError(null);
-        },
-        onError: (error) => {
-          setDeleteError(getApiErrorMessage(error, "Could not delete event."));
-        },
-      },
+    downloadTextFile(
+      `attendance-report-students-${new Date().toISOString().slice(0, 10)}.csv`,
+      [header.join(","), ...rows.map((r) => r.join(","))].join("\n"),
     );
   };
 
-  const saveEditableEvent = () => {
-    if (!canManageEvents) return;
-    if (!editableEvent) return;
-    const eventId = editableEvent.id ?? editableEvent._id;
-    if (eventId == null || String(eventId).trim() === "") {
-      setEditSaveError("Missing event id.");
-      return;
-    }
+  const buildEventExportRows = (
+    ev: AttendanceEvent,
+    students: AttendanceStudent[] | null = null,
+  ) => {
+    const list = Array.isArray(students) ? students : ev.students || [];
+    const header = ["Student ID", "Student", "Department", "Course", "Major", "Year Level", "Status", "Fine PHP"];
+    const body = list.map((s: AttendanceStudent) => {
+      const yl = getYearLevel(s);
+      return [
+        String(s.id || ""),
+        String(s.name || ""),
+        String(getStudentDepartmentLabel(s)),
+        String(getCourse(s)),
+        String(getMajor(s) || "—"),
+        yl != null ? yl : "—",
+        ev.status === "upcoming" ? "No record" : String(s.status || ""),
+        Number(s.finePhp) || 0,
+      ];
+    });
+    return { header, body };
+  };
 
-    const payload = {
-      name: String(editableEvent.name ?? "").trim(),
-      date: eventYmdForDateInput(editableEvent.date),
-      venue: String(editableEvent.venue ?? "").trim(),
-      duration: String(editableEvent.duration ?? "Whole Day").trim(),
-      am_time_in: editableEvent.am_time_in ?? null,
-      am_time_out: editableEvent.am_time_out ?? null,
-      pm_time_in: editableEvent.pm_time_in ?? null,
-      pm_time_out: editableEvent.pm_time_out ?? null,
-      am_grace_in: Math.max(0, Number(editableEvent.am_grace_in ?? editableEvent.amGraceInMinutes ?? 0) || 0),
-      pm_grace_in: Math.max(0, Number(editableEvent.pm_grace_in ?? editableEvent.pmGraceInMinutes ?? 0) || 0),
-      audience_notes: editableEvent.audience_notes ?? "",
-      fine_amount: Math.max(0, Number(editableEvent.fine ?? editableEvent.fineAmount ?? 0) || 0),
-    };
-
-    if (!payload.name || !payload.date || !payload.venue) {
-      setEditSaveError("Event name, date, and venue are required.");
-      return;
-    }
-
-    setEditSaveError(null);
-    editEventMutation.mutate(
-      { id: eventId, payload },
-      {
-        onSuccess: () => {
-          closeEventModal();
-        },
-        onError: (error) => {
-          setEditSaveError(getApiErrorMessage(error, "Could not save event changes."));
-        },
-      },
+  const exportCsvEvent = (ev: AttendanceEvent, students: AttendanceStudent[] | null = null) => {
+    const { header, body } = buildEventExportRows(ev, students);
+    const csvBody = body.map((row: (string | number)[]) =>
+      row.map((cell: string | number) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
     );
+    downloadTextFile(`attendance-${ev.id}-${ev.date}.csv`, [header.join(","), ...csvBody].join("\n"));
   };
 
-  const patchEditableEventSchedule = (partial: EventSchedulePatch) => {
-    setEditableEvent((prev) => (prev ? applySchedulePatch(prev, partial) : prev));
+  const buildEventExportRowsForPdf = (
+    ev: AttendanceEvent,
+    students: AttendanceStudent[] | null = null,
+  ) => {
+    const list = Array.isArray(students) ? students : ev.students || [];
+    const header = ["Student ID", "Student", "Department", "Year Level", "Status", "Fine PHP"];
+    const body = list.map((s: AttendanceStudent) => {
+      const yl = getYearLevel(s);
+      return [
+        String(s.id || ""),
+        String(s.name || ""),
+        String(getStudentDepartmentLabel(s)),
+        yl != null ? yl : "—",
+        ev.status === "upcoming" ? "No record" : String(s.status || ""),
+        Number(s.finePhp) || 0,
+      ];
+    });
+    return { header, body };
   };
 
-  const openDeleteFromRow = (ev: DisplayEvent) => {
-    if (!canManageEvents) return;
-    setEditableEvent(null);
-    setSelectedEvent(ev);
-    setDeleteError(null);
-    setShowDeleteConfirm(true);
+  const exportPdfEvent = async (ev: AttendanceEvent, students: AttendanceStudent[] | null = null) => {
+    const { header, body } = buildEventExportRowsForPdf(ev, students);
+    await downloadPdfTable({
+      filename: `attendance-${ev.id}-${ev.date}.pdf`,
+      title: "Attendance Report",
+      subtitle: `${ev.name || "Event"} · ${formatEventDateForDisplay(ev.date)} · ${ev.status || ""}`,
+      head: header,
+      body,
+    });
   };
 
-  const handleEditClick = (ev: DisplayEvent, e?: MouseEvent<HTMLButtonElement>) => {
-    e?.stopPropagation?.();
-    if (!canManageEvents) return;
-    if (isEventLockedFromEditing(ev.status)) {
-      const label = ev.name != null && String(ev.name).trim() !== "" ? String(ev.name).trim() : "This event";
-      setEditNotAllowedEventLabel(label);
-      setShowEditNotAllowedModal(true);
-      return;
+  const exportPdfAll = async () => {
+    const selectedEvents = events.filter((ev) => {
+      if (exportAllEventId !== "all" && String(ev.id) !== String(exportAllEventId)) return false;
+      if (exportAllEventStatus !== "all" && ev.status !== exportAllEventStatus) return false;
+      return true;
+    });
+    const detailedEvents: AttendanceEvent[] = await Promise.all(
+      selectedEvents.map(async (ev): Promise<AttendanceEvent> => {
+        const id = ev.id;
+        if (id == null) return ev;
+        try {
+          const full = await fetchAttendancePageEventDetail(id);
+          return (full as AttendanceEvent | null) || ev;
+        } catch {
+          return ev;
+        }
+      }),
+    );
+    const header = [
+      "Event",
+      "Date",
+      "Event Status",
+      "Student ID",
+      "Student Name",
+      "Department",
+      "Year Level",
+      "Attendance",
+      "Fine PHP",
+    ];
+    const body: (string | number)[][] = [];
+    for (const ev of detailedEvents) {
+      for (const s of ev.students || []) {
+        const course = getCourseWithMajorCode(s);
+        const college = getStudentDepartmentName(s);
+        if (exportAllCollege !== "all" && college !== exportAllCollege) continue;
+        if (exportAllCourse !== "all" && course !== exportAllCourse) continue;
+        const attendance = ev.status === "upcoming" ? "no_record" : s.status === "attended" ? "attended" : "absent";
+        const yl = getYearLevel(s);
+        body.push([
+          String(ev.name || ""),
+          ev.date ?? "",
+          ev.status ?? "",
+          String(s.id || ""),
+          String(s.name || ""),
+          college,
+          yl != null ? yl : "—",
+          attendance === "no_record" ? "No record" : attendance,
+          Number(s.finePhp) || 0,
+        ]);
+      }
     }
-    openEventModal(ev, "edit");
+    await downloadPdfTable({
+      filename: `attendance-report-students-${new Date().toISOString().slice(0, 10)}.pdf`,
+      title: "Attendance Report — All Events",
+      subtitle: `Generated ${new Date().toLocaleString("en-PH")} · ${body.length} student record(s)`,
+      head: header,
+      body,
+    });
   };
 
-  // Filter events by status, session kind, and search
-  const filteredEvents = allEvents.filter((ev) => {
-    const matchesStatus =
-      statusFilter === "All Status" || normStatusKey(ev.status) === normStatusKey(statusFilter);
-    const kind = getEventSessionKindForFilter(ev);
-    const matchesSession =
-      sessionKindFilter === "all" ||
-      (sessionKindFilter === "whole" && kind === "whole") ||
-      (sessionKindFilter === "am" && kind === "am") ||
-      (sessionKindFilter === "pm" && kind === "pm");
-    const q = search.toLowerCase().trim();
-    const matchesSearch =
-      !q ||
-      ev.name.toLowerCase().includes(q) ||
-      ev.venue?.toLowerCase().includes(q) ||
-      getAudienceScopeLabel(ev).toLowerCase().includes(q) ||
-      (ev.audience_notes && String(ev.audience_notes).toLowerCase().includes(q));
-    return matchesStatus && matchesSession && matchesSearch;
-  });
-
-  const eventsTotal = filteredEvents.length;
-  const eventsPageSize = viewMode === "grid" ? EVENTS_GRID_PAGE_SIZE : EVENTS_LIST_PAGE_SIZE;
-  const eventsTotalPages = Math.max(1, Math.ceil(eventsTotal / eventsPageSize) || 1);
-  const eventsPageSafe = Math.min(eventsPage, eventsTotalPages);
-
-  const paginatedEvents = useMemo(() => {
-    const start = (eventsPageSafe - 1) * eventsPageSize;
-    return filteredEvents.slice(start, start + eventsPageSize);
-  }, [filteredEvents, eventsPageSafe, eventsPageSize]);
-
-  useEffect(() => {
-    setEventsPage(1);
-  }, [search, statusFilter, sessionKindFilter, viewMode]);
-
-  useEffect(() => {
-    setEventsPage((p) => Math.min(p, eventsTotalPages));
-  }, [eventsTotalPages]);
-
-  function eventRowKey(ev: DisplayEvent, index: number): string {
-    const id = ev.id ?? (ev as EditableEvent)._id;
-    if (id != null && String(id).trim() !== "") return String(id);
-    return `event-${index}`;
-  }
+  const statusBadgeClass = (st: string | undefined) => {
+    if (st === "completed") return "bg-emerald-100 text-black";
+    if (st === "ongoing") return "bg-amber-100 text-black";
+    if (st === "upcoming") return "bg-sky-100 text-black";
+    return "bg-[#07713c]/10 text-black";
+  };
 
   return (
     <div className="flex min-h-screen bg-[#07713c]/[0.04] [&_button]:cursor-pointer">
-      {/* Sidebar — same green as Attendance */}
-      <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713c] text-white flex flex-col [&_p]:text-white">
+      <aside className="sticky top-0 flex h-screen max-h-screen w-64 shrink-0 flex-col self-start overflow-y-auto bg-[#07713c] text-white [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
+        <nav className="flex-1 space-y-1 px-4">
           {navItems.map((item) => (
             <button
               key={item.id}
               type="button"
-              onClick={() => onNavigate && onNavigate(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                activeNav === item.id ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
+              onClick={() => handleNav(item.id)}
+              className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-medium transition-colors ${
+                item.id === "events" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
               }`}
             >
               <SidebarNavIcon navId={item.id} />
@@ -699,27 +968,41 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
         <SidebarUserFullName />
       </aside>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
+      <div className="flex min-w-0 flex-1 flex-col">
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
           <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3">
-            <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">Events</h1>
-            <div className="flex items-center gap-4">
-              <div className="relative flex items-center gap-2">
+            <div>
+              <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">
+                Events
+              </h1>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setExportOpen(true)}
+                className="rounded-lg border border-[#e6a100] bg-[#ffb300] px-3 py-2 text-sm font-medium text-black hover:bg-[#e6a100]"
+              >
+                Export / Reports
+              </button>
+              <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setShowLogout((prev) => !prev)}
+                  onClick={() => setShowLogout((p) => !p)}
                   className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#07713c] hover:bg-[#07713c]/10"
                   aria-label="Account menu"
-                  aria-expanded={showLogout}
-                  aria-haspopup="true"
                 >
                   <UserCircleIcon />
                 </button>
                 {showLogout && (
                   <div className="absolute right-0 top-full z-10 mt-1 min-w-[100px] rounded-lg border border-[#07713c]/30 bg-white py-1 shadow-lg">
-                    <button onClick={() => { setShowLogout(false); onLogout?.(); }} className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowLogout(false);
+                        onLogout?.();
+                      }}
+                      className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                    >
                       Logout
                     </button>
                   </div>
@@ -729,179 +1012,360 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
           </div>
         </header>
 
-        <main className={`flex-1 overflow-auto p-6 ${EVENTS_PAGE_TEXT} [&_th]:font-bold [&_th]:!text-black`}>
-          <div className="mx-auto w-full min-w-0 max-w-7xl space-y-4">
-          {isEventsLoading && (
-            <p className="mb-3 rounded-lg border border-[#07713c]/30 bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black">Loading events…</p>
-          )}
-          {isEventsError && (
-            <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-black">Could not load events.</p>
-          )}
-          {/* Search, Filter, View, Add */}
-          <div className="flex flex-wrap gap-4 mb-4 items-center">
-            <div className="relative flex-1 min-w-[200px]">
-              <SearchMagnifierIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-black" />
-              <input
-                type="search"
-                placeholder="Search Event"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-lg border border-[#07713c]/40 bg-white py-2 pl-10 pr-10 text-sm text-black placeholder:text-black/45 focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c] [&::-webkit-search-cancel-button]:hidden"
-              />
-              {search.trim() !== "" && (
-                <button
-                  type="button"
-                  onClick={() => setSearch("")}
-                  className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-lg leading-none text-black/85 hover:bg-gray-100 hover:text-black focus:outline-none focus:ring-2 focus:ring-[#07713c]/30"
-                  aria-label="Clear events search"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="rounded-lg border border-[#07713c]/40 bg-white px-4 py-2 text-sm text-black focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15"
+        <main className={`flex-1 overflow-auto p-6 ${ATTENDANCE_TEXT} [&_th]:font-bold [&_th]:text-black`}>
+          <div className="mx-auto w-full min-w-0 max-w-7xl space-y-6">
+          {isPageError && (
+            <div
+              className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-black"
+              role="alert"
             >
-              <option value="All Status">All Status</option>
-              <option value="Ongoing">Ongoing</option>
-              <option value="Completed">Completed</option>
-              <option value="Upcoming">Upcoming</option>
-            </select>
-            <select
-              value={sessionKindFilter}
-              onChange={(e) => setSessionKindFilter(e.target.value as SessionKindFilter)}
-              className="rounded-lg border border-[#07713c]/40 bg-white px-4 py-2 text-sm text-black focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15"
-              aria-label="Filter by session"
-            >
-              <option value="all">All sessions</option>
-              <option value="whole">Whole day</option>
-              <option value="am">AM session</option>
-              <option value="pm">PM session</option>
-            </select>
-            <div className="hidden flex overflow-hidden rounded-lg border border-[#07713c]/40">
-              <button
-                onClick={() => setViewMode("list")}
-                className={`px-3 py-2 text-sm ${viewMode === "list" ? "bg-[#07713c]/10 font-medium text-black" : "bg-white text-black/80 hover:bg-[#07713c]/10"}`}
-              >
-                ☰
-              </button>
-              <button
-                onClick={() => setViewMode("grid")}
-                className={`px-3 py-2 text-sm ${viewMode === "grid" ? "bg-[#07713c]/10 font-medium text-black" : "bg-white text-black/80 hover:bg-[#07713c]/10"}`}
-              >
-                ⊞
-              </button>
-            </div>
-            {canManageEvents && (
+              Could not load attendance data.{" "}
               <button
                 type="button"
-                onClick={() => setShowAddEvent(true)}
-                className="rounded-lg border border-[#e6a100] bg-[#ffb300] px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#e6a100]"
+                className="font-semibold text-black underline"
+                onClick={() => refetchAttendancePage()}
               >
-                + Add Event
+                Retry
               </button>
-            )}
-          </div>
+            </div>
+          )}
+          {isPageLoading && events.length === 0 && !isPageError && (
+            <p className="text-sm font-medium text-black">Loading events…</p>
+          )}
+          {detailEvent && isStudentListPath ? (
+            <section className="min-w-0 rounded-xl border border-[#07713c]/30 bg-white p-5 shadow-sm">
+              <button
+                type="button"
+                onClick={closeEventDetails}
+                className="mb-3 rounded-lg border border-[#07713c]/40 bg-white px-3 py-1.5 text-sm font-medium text-black hover:bg-[#07713c]/10"
+              >
+                ← Back to event list
+              </button>
 
-          {/* Events Content - List or Grid */}
-          <div className="overflow-hidden rounded-xl border border-[#07713c]/30 bg-white shadow-sm">
-            {viewMode === "list" ? (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[960px] table-fixed border-collapse text-sm">
-                  <colgroup>
-                    <col className="w-[20%]" />
-                    <col className="w-[12%]" />
-                    <col className="w-[10%]" />
-                    <col className="w-[18%]" />
-                    <col className="w-[9%]" />
-                    <col className="w-[11%]" />
-                    <col className="w-[20%]" />
-                  </colgroup>
-                  <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-xs uppercase tracking-wide ${EVENTS_TH_TEXT}`}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-2xl font-semibold text-black sm:text-3xl">{detailEvent.name}</h3>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(detailEvent.status)}`}>
+                      {detailEvent.status === "ongoing" ? "Ongoing" : detailEvent.status === "completed" ? "Completed" : "Upcoming"}
+                    </span>
+                    <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-black">
+                      {detailEventMeta!.type}
+                    </span>
+                    <span className="inline-flex rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-black">
+                      Fines: {formatPhp(detailEvent.finePerAbsence ?? MOCK_FINE_PER_ABSENCE_PHP)} per absence
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="rounded-xl border border-[#07713c]/30 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-black">Students</p>
+                  <p className="mt-1 text-3xl font-semibold text-black">{detailEvent.totalStudents}</p>
+                  <p className="mt-1 text-sm text-black">{detailEventMeta!.audience}</p>
+                </div>
+                <div className="rounded-xl border border-[#07713c]/30 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-black">Attended</p>
+                  <p className="mt-1 text-3xl font-semibold text-black">{detailEvent.attended}</p>
+                  <p className="mt-1 text-sm text-black">{ratePct(detailEvent.attended ?? 0, detailEvent.totalStudents ?? 0)}% attendance</p>
+                </div>
+                <div className="rounded-xl border border-[#07713c]/30 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-black">Absent</p>
+                  <p className="mt-1 text-3xl font-semibold text-black">{detailEvent.absent}</p>
+                  <p className="mt-1 text-sm text-black">{ratePct(detailEvent.absent ?? 0, detailEvent.totalStudents ?? 0)}% of students</p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-3">
+                <div className="rounded-xl border border-[#07713c]/30 bg-white p-5">
+                  <h4 className="text-lg font-semibold text-black">Schedule</h4>
+                  <div className="mt-3 rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.06] px-3 py-2.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-black/75">Event date</p>
+                    <p className="mt-0.5 text-base font-semibold text-black">{formatEventDateForDisplay(detailEvent.date)}</p>
+                  </div>
+                  <div className="mt-4 space-y-4 text-sm">
+                    {detailEventMeta!.scheduleAmRange && (
+                      <div className="rounded-lg border border-[#07713c]/20 bg-[#07713c]/5 p-3">
+                        <p className="font-semibold text-black">AM Session</p>
+                        <p className="mt-1 text-black">{detailEventMeta!.scheduleAmRange}</p>
+                        <p className="mt-1 text-xs text-black">
+                          Late in:{" "}
+                          {detailEventMeta!.lateAmIn != null
+                            ? formatGraceDurationLabel(detailEventMeta!.lateAmIn)
+                            : "—"}
+                        </p>
+                      </div>
+                    )}
+                    {detailEventMeta!.schedulePmRange && (
+                      <div className="rounded-lg border border-[#07713c]/20 bg-[#07713c]/5 p-3">
+                        <p className="font-semibold text-black">PM Session</p>
+                        <p className="mt-1 text-black">{detailEventMeta!.schedulePmRange}</p>
+                        <p className="mt-1 text-xs text-black">
+                          Late in:{" "}
+                          {detailEventMeta!.latePmIn != null
+                            ? formatGraceDurationLabel(detailEventMeta!.latePmIn)
+                            : "—"}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2 border-t border-[#07713c]/20 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => exportCsvEvent(detailEvent)}
+                      className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
+                    >
+                      Export Excel (CSV) — this event
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => exportPdfEvent(detailEvent)}
+                      className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
+                    >
+                      Export PDF — this event
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 border-t border-[#07713c]/20 pt-5">
+                <h4 className="text-lg font-semibold text-black">Students</h4>
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border border-[#07713c]/30 bg-[#07713c]/[0.06] p-3">
+                <div className="relative min-w-[220px] flex-1">
+                  <SearchMagnifierIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-black" />
+                  <input
+                    type="search"
+                    value={studentListSearch}
+                    onChange={(e) => setStudentListSearch(e.target.value)}
+                    placeholder="Search name, ID, or year level"
+                    className="w-full rounded-lg border border-[#07713c]/40 bg-white py-2 pl-10 pr-10 text-sm text-black placeholder:text-black/45 focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c] [&::-webkit-search-cancel-button]:hidden"
+                  />
+                  {studentListSearch.trim() !== "" && (
+                    <button
+                      type="button"
+                      onClick={() => setStudentListSearch("")}
+                      className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-lg leading-none text-black/85 hover:bg-gray-100 hover:text-black focus:outline-none focus:ring-2 focus:ring-[#07713c]/30"
+                      aria-label="Clear students list search"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                {SHOW_COLLEGE_MAJOR_FILTER_DROPDOWNS && (
+                <label className="min-w-[200px] max-w-[min(100%,320px)] shrink-0 text-xs text-black">
+                  Department
+                  <select
+                    value={studentListCollege}
+                    onChange={(e) => setStudentListCollege(e.target.value)}
+                    className="mt-1 block w-full rounded-lg border border-[#07713c]/40 bg-white px-2 py-2 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                  >
+                    <option value="all">All colleges</option>
+                    {studentListCollegeOptions.map((col) => (
+                      <option key={col} value={col}>
+                        {col}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                )}
+                {showStudentListMajorFilter && (
+                  <label className="w-[260px] text-xs text-black">
+                    Major
+                    <select
+                      value={studentListMajor}
+                      onChange={(e) => setStudentListMajor(e.target.value)}
+                      className="mt-1 block w-full rounded-lg border border-[#07713c]/40 bg-white px-2 py-2 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                    >
+                      <option value="all">All majors</option>
+                      {studentListMajorOptions.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className="text-xs text-black">
+                  Year level
+                  <select
+                    value={studentListYearLevel}
+                    onChange={(e) => setStudentListYearLevel(e.target.value)}
+                    className="mt-1 block w-full rounded-lg border border-[#07713c]/40 bg-white px-2 py-2 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                  >
+                    <option value="all">All year levels</option>
+                    {studentListYearLevelOptions.map((yl) => (
+                      <option key={yl} value={String(yl)}>
+                        {yl}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs text-black">
+                  Status
+                  <select
+                    value={studentListAttendance}
+                    onChange={(e) => setStudentListAttendance(e.target.value)}
+                    className="mt-1 block w-full rounded-lg border border-[#07713c]/40 bg-white px-2 py-2 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="attended">Attended</option>
+                    <option value="absent">Absent</option>
+                  </select>
+                </label>
+                <label className="ml-auto text-xs text-black">
+                  Rows per page
+                  <select
+                    value={studentListPageSize}
+                    onChange={(e) => setStudentListPageSize(Number(e.target.value))}
+                    className="mt-1 block w-full rounded-lg border border-[#07713c]/40 bg-white px-2 py-2 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                  >
+                    {[5, 10, 20, 50, 100].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="mt-3 min-w-0 overflow-x-auto rounded-lg border border-[#07713c]/30">
+                <table className={`w-full border-collapse text-sm ${TABLE_CELL_NOWRAP}`}>
+                  <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-center text-xs uppercase ${ATTENDANCE_TH_TEXT}`}>
                     <tr>
-                      <th className="align-middle px-3 py-3 text-left">Event Name</th>
-                      <th className="align-middle px-3 py-3 text-left">Date</th>
-                      <th className="align-middle px-3 py-3 text-left">Session</th>
-                      <th className="align-middle px-3 py-3 text-left">Venue</th>
-                      <th className="whitespace-nowrap px-3 py-3 text-right align-middle">
-                        Fines
-                      </th>
-                      <th className="align-middle px-3 py-3 text-center">Status</th>
-                      <th className="align-middle px-3 py-3 text-right">Actions</th>
+                      <th rowSpan={2} className="border-b border-x border-[#07713c]/30 px-3 py-2 align-middle">Student ID</th>
+                      <th rowSpan={2} className="border-b border-x border-[#07713c]/30 px-3 py-2 align-middle">Name</th>
+                      <th rowSpan={2} className="border-b border-x border-[#07713c]/30 px-3 py-2 align-middle">Department</th>
+                      <th rowSpan={2} className="border-b border-x border-[#07713c]/30 px-3 py-2 align-middle">Year level</th>
+                      <th rowSpan={2} className="border-b border-x border-[#07713c]/30 px-3 py-2 align-middle">Attendance</th>
+                      {detailEventMeta!.hasAmSession && detailEventMeta!.hasPmSession ? (
+                        <>
+                          <th colSpan={2} className="border-b border-l border-r border-[#07713c]/30 px-3 py-2 text-center">AM</th>
+                          <th colSpan={2} className="border-b border-r border-[#07713c]/30 px-3 py-2 text-center">PM</th>
+                        </>
+                      ) : detailEventMeta!.hasAmSession ? (
+                        <th colSpan={2} className="border-b border-l border-r border-[#07713c]/30 px-3 py-2 text-center">AM</th>
+                      ) : (
+                        <th colSpan={2} className="border-b border-l border-r border-[#07713c]/30 px-3 py-2 text-center">PM</th>
+                      )}
+                      <th rowSpan={2} className={`border-b border-l border-r border-[#07713c]/30 px-3 py-2 text-center align-middle ${ATTENDANCE_TH_TEXT}`}>Fines / penalty</th>
+                    </tr>
+                    <tr>
+                      {detailEventMeta!.hasAmSession && (
+                        <>
+                          <th className="border-b border-l border-[#07713c]/30 px-3 py-2 text-center">Time in</th>
+                          <th className="border-b border-r border-[#07713c]/30 px-3 py-2 text-center">Time out</th>
+                        </>
+                      )}
+                      {detailEventMeta!.hasPmSession && (
+                        <>
+                          <th className="border-b border-l border-[#07713c]/30 px-3 py-2 text-center">Time in</th>
+                          <th className="border-b border-r border-[#07713c]/30 px-3 py-2 text-center">Time out</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredEvents.length === 0 ? (
+                    {filteredStudentList.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-4 py-10 text-center text-sm text-black/70">
-                          No event records.
+                        <td
+                        colSpan={6 + (detailEventMeta!.hasAmSession ? 2 : 0) + (detailEventMeta!.hasPmSession ? 2 : 0)}
+                        className="border border-[#07713c]/30 px-3 py-6 text-center text-sm text-black"
+                      >
+                          No students match the current filters.
                         </td>
                       </tr>
                     ) : (
-                      paginatedEvents.map((ev, i) => {
-                        const fineVal = getFinesForEvent(ev);
+                      visibleStudentRows.map((s) => {
+                        const rec = getStudentSessionRecord(s, detailEvent);
+                        const isNoRecordAttendance = detailEvent.status === "upcoming";
+                        const isAttended = s.status === "attended";
+                        const rowYearLevel = getYearLevel(s);
+                        const rowSelected = String(selectedStudentId) === String(s.id);
                         return (
                           <tr
-                            key={eventRowKey(ev, i)}
-                            className="cursor-pointer border-b border-[#07713c]/15 hover:bg-[#07713c]/[0.04]"
-                            onClick={() => openEventModal(ev, "view")}
+                            key={s.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setSelectedStudentId(s.id != null ? String(s.id) : null)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setSelectedStudentId(s.id != null ? String(s.id) : null);
+                              }
+                            }}
+                            className={`cursor-pointer transition-colors ${rowSelected ? "bg-[#07713c]/12" : ""}`}
                           >
-                            <td className="min-w-0 px-3 py-3 align-middle text-black">
-                              <span className="block truncate">{ev.name}</span>
+                            <td className="border-b border-x border-[#07713c]/30 px-3 py-1.5 text-center text-black">
+                              {String(s.id).toUpperCase()}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-3 align-middle text-black">
-                              {formatEventDateForDisplay(ev.date)}
+                            <td className="border-b border-x border-[#07713c]/30 px-3 py-1.5 text-center text-black">{s.name}</td>
+                            <td className="border-b border-x border-[#07713c]/30 px-3 py-1.5 text-center text-black">
+                              {getStudentDepartmentLabel(s)}
                             </td>
-                            <td className="px-3 py-3 align-middle text-black">
-                              {formatDurationForEventsList(ev)}
+                            <td className="border-b border-x border-[#07713c]/30 px-3 py-1.5 text-center tabular-nums text-black">
+                              {rowYearLevel != null ? rowYearLevel : "—"}
                             </td>
-                            <td className="min-w-0 px-3 py-3 align-middle text-black">
-                              <span className="line-clamp-2 break-words" title={ev.venue}>
-                                {ev.venue}
-                              </span>
-                            </td>
-                            <td className="align-middle py-3 px-3 text-right tabular-nums text-sm text-black">
-                              ₱{Number(fineVal).toLocaleString("en-PH")}
-                            </td>
-                            <td className="align-middle py-3 px-3 text-center">
-                              <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getEventStatusClass(ev.status)}`}>
-                                {displayEventStatus(ev.status)}
-                              </span>
-                            </td>
-                            <td className="align-middle py-3 px-3 text-right">
-                              <div
-                                className="flex flex-wrap items-center justify-end gap-1"
-                                onClick={(e) => e.stopPropagation()}
+                            <td className="border-b border-x border-[#07713c]/30 px-3 py-1.5 text-center">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  isNoRecordAttendance
+                                    ? "bg-amber-100 text-black"
+                                    : isAttended
+                                      ? "bg-green-100 text-black"
+                                      : "bg-red-100 text-black"
+                                }`}
                               >
-                                <button
-                                  type="button"
-                                  className="rounded-md px-2 py-1 text-xs font-medium text-black hover:bg-[#07713c]/10"
-                                  onClick={() => openEventModal(ev, "view")}
-                                >
-                                  View
-                                </button>
-                                {canManageEvents && (
-                                  <>
-                                    <button
-                                      type="button"
-                                      title="Edit event"
-                                      className="rounded-md px-2 py-1 text-xs font-medium text-black hover:bg-blue-50"
-                                      onClick={(e) => handleEditClick(ev, e)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="px-2 py-1 rounded-md text-xs font-medium text-black hover:bg-red-50"
-                                      onClick={() => openDeleteFromRow(ev)}
-                                    >
-                                      Delete
-                                    </button>
-                                  </>
+                                {isNoRecordAttendance ? "No record" : isAttended ? "Attended" : "Absent"}
+                              </span>
+                            </td>
+                            {detailEventMeta!.hasAmSession && (
+                              <td className="border-b border-l border-[#07713c]/30 px-3 py-1.5 text-center text-xs">
+                                {rec.amIn === "No record" ? (
+                                  <span className="text-xs text-black">
+                                    No record
+                                  </span>
+                                ) : (
+                                  <span className="text-black">{rec.amIn}</span>
                                 )}
-                              </div>
+                              </td>
+                            )}
+                            {detailEventMeta!.hasAmSession && (
+                              <td className="border-b border-r border-[#07713c]/30 px-3 py-1.5 text-center text-xs">
+                                {rec.amOut === "No record" ? (
+                                  <span className="text-xs text-black">
+                                    No record
+                                  </span>
+                                ) : (
+                                  <span className="text-black">{rec.amOut}</span>
+                                )}
+                              </td>
+                            )}
+                            {detailEventMeta!.hasPmSession && (
+                              <td className="border-b border-l border-[#07713c]/30 px-3 py-1.5 text-center text-xs">
+                                {rec.pmIn === "No record" ? (
+                                  <span className="text-xs text-black">
+                                    No record
+                                  </span>
+                                ) : (
+                                  <span className="text-black">{rec.pmIn}</span>
+                                )}
+                              </td>
+                            )}
+                            {detailEventMeta!.hasPmSession && (
+                              <td className="border-b border-r border-[#07713c]/30 px-3 py-1.5 text-center text-xs">
+                                {rec.pmOut === "No record" ? (
+                                  <span className="text-xs text-black">
+                                    No record
+                                  </span>
+                                ) : (
+                                  <span className="text-black">{rec.pmOut}</span>
+                                )}
+                              </td>
+                            )}
+                            <td className="border-b border-l border-r border-[#07713c]/30 px-3 py-1.5 text-center tabular-nums text-black">
+                              {Number(rec.penalty) ? formatPhp(Number(rec.penalty) || 0) : "—"}
                             </td>
                           </tr>
                         );
@@ -910,446 +1374,685 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
                   </tbody>
                 </table>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4">
-                {filteredEvents.length === 0 ? (
-                  <div className="col-span-full py-10 text-center text-sm text-black/70">No event records.</div>
-                ) : (
-                  paginatedEvents.map((ev, i) => (
-                    <div
-                      key={eventRowKey(ev, i)}
+              <PaginationBar
+                totalCount={studentListTotal}
+                page={studentListPage}
+                pageSize={studentListPageSize}
+                onPageChange={setStudentListPage}
+                emptyLabel="No students to show."
+                itemLabel="students"
+                className="!text-black"
+              />
+            </section>
+          ) : detailEvent ? (
+            <section className="rounded-xl border border-[#07713c]/30 bg-white p-5 shadow-sm">
+              <button
+                type="button"
+                onClick={closeEventDetails}
+                className="mb-3 rounded-lg border border-[#07713c]/40 bg-white px-3 py-1.5 text-sm font-medium text-black hover:bg-[#07713c]/10"
+              >
+                ← Back to event list
+              </button>
+
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-4xl font-semibold text-black">{detailEvent.name}</h3>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(detailEvent.status)}`}>
+                      {detailEvent.status === "ongoing" ? "Ongoing" : detailEvent.status === "completed" ? "Completed" : "Upcoming"}
+                    </span>
+                    <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-black">
+                      {detailEventMeta!.type}
+                    </span>
+                    <span className="inline-flex rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-black">
+                      Fines: {formatPhp(detailEvent.finePerAbsence ?? MOCK_FINE_PER_ABSENCE_PHP)} per absence
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="rounded-xl border border-[#07713c]/30 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-black">Students</p>
+                  <p className="mt-1 text-4xl font-semibold text-black">{detailEvent.totalStudents}</p>
+                  <p className="mt-1 text-sm text-black">{detailEventMeta!.audience}</p>
+                </div>
+                <div className="rounded-xl border border-[#07713c]/30 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-black">Attended</p>
+                  <p className="mt-1 text-4xl font-semibold text-black">{detailEvent.attended}</p>
+                  <p className="mt-1 text-sm text-black">{ratePct(detailEvent.attended ?? 0, detailEvent.totalStudents ?? 0)}% attendance</p>
+                </div>
+                <div className="rounded-xl border border-[#07713c]/30 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-black">Absent</p>
+                  <p className="mt-1 text-4xl font-semibold text-black">{detailEvent.absent}</p>
+                  <p className="mt-1 text-sm text-black">{ratePct(detailEvent.absent ?? 0, detailEvent.totalStudents ?? 0)}% of students</p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-3">
+                <div className="rounded-xl border border-[#07713c]/30 bg-white p-5">
+                  <h4 className="text-lg font-semibold text-black">Schedule</h4>
+                  <div className="mt-3 rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.06] px-3 py-2.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-black/75">Event date</p>
+                    <p className="mt-0.5 text-base font-semibold text-black">{formatEventDateForDisplay(detailEvent.date)}</p>
+                  </div>
+                  <div className="mt-4 space-y-4 text-sm">
+                    {detailEventMeta!.scheduleAmRange && (
+                      <div className="rounded-lg border border-[#07713c]/20 bg-[#07713c]/5 p-3">
+                        <p className="font-semibold text-black">AM Session</p>
+                        <p className="mt-1 text-black">{detailEventMeta!.scheduleAmRange}</p>
+                        <p className="mt-1 text-xs text-black">
+                          Late in:{" "}
+                          {detailEventMeta!.lateAmIn != null
+                            ? formatGraceDurationLabel(detailEventMeta!.lateAmIn)
+                            : "—"}
+                        </p>
+                      </div>
+                    )}
+                    {detailEventMeta!.schedulePmRange && (
+                      <div className="rounded-lg border border-[#07713c]/20 bg-[#07713c]/5 p-3">
+                        <p className="font-semibold text-black">PM Session</p>
+                        <p className="mt-1 text-black">{detailEventMeta!.schedulePmRange}</p>
+                        <p className="mt-1 text-xs text-black">
+                          Late in:{" "}
+                          {detailEventMeta!.latePmIn != null
+                            ? formatGraceDurationLabel(detailEventMeta!.latePmIn)
+                            : "—"}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2 border-t border-[#07713c]/20 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => openEventStudents(detailEvent.id)}
+                      className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
+                    >
+                      Students list
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => exportCsvEvent(detailEvent)}
+                      className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
+                    >
+                      Export Excel (CSV) — this event
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => exportPdfEvent(detailEvent)}
+                      className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
+                    >
+                      Export PDF — this event
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {detailEvent.status !== "upcoming" && (
+                <>
+                </>
+              )}
+
+              {detailEvent.status === "upcoming" && (
+                <p className="mt-4 text-sm text-black">No attendance recorded yet for this event.</p>
+              )}
+
+            </section>
+          ) : (
+          <>
+          {/* Search + event list */}
+          <section className="min-w-0 overflow-hidden rounded-xl border border-[#07713c]/30 bg-white shadow-sm">
+            <div className="border-b border-[#07713c]/20 px-4 py-3">
+              <h2 className="text-sm font-semibold text-black">Event list</h2>
+            </div>
+            <div className="border-b border-[#07713c]/20 p-4">
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="w-96 max-w-full shrink-0 sm:w-[28rem]">
+                  <label className="mb-1 block text-xs font-medium text-black">Search event</label>
+                  <div className="relative">
+                    <SearchMagnifierIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-black" />
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Filter by event name…"
+                      className="w-full rounded-lg border border-[#07713c]/40 bg-white py-2 pl-10 pr-4 text-sm text-black placeholder:text-black/45 focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-end gap-4">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-black">Status</label>
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                      className="rounded-lg border border-[#07713c]/40 bg-white px-3 py-2 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                    >
+                      <option value="all">All</option>
+                      <option value="upcoming">Upcoming</option>
+                      <option value="ongoing">Ongoing</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                  </div>
+                  <label className="flex shrink-0 flex-col">
+                    <span className="mb-1 block text-xs font-medium text-black">Rows per page</span>
+                    <select
+                      value={eventListPageSize}
+                      onChange={(e) => {
+                        setEventListPageSize(Number(e.target.value));
+                        setEventListPage(1);
+                      }}
+                      className="rounded-lg border border-[#07713c]/40 bg-white px-2 py-2 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                      aria-label="Rows per page for event list"
+                    >
+                      {EVENT_LIST_ROWS_PER_PAGE_OPTIONS.map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter("all");
+                      setSearch("");
+                      setEventListPageSize(DEFAULT_EVENT_LIST_PAGE_SIZE);
+                      setEventListPage(1);
+                    }}
+                    className="rounded-lg border border-[#07713c]/40 px-3 py-2 text-sm text-black hover:bg-[#07713c]/10 focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="min-w-0 overflow-x-auto">
+              <table className={`w-full text-sm ${TABLE_CELL_NOWRAP}`}>
+                <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-left text-xs uppercase tracking-wide ${ATTENDANCE_TH_TEXT}`}>
+                  <tr>
+                    <th className="px-4 py-2.5 align-middle">Event name</th>
+                    <th className="px-4 py-2.5 align-middle">Date</th>
+                    <th className="px-4 py-2.5 align-middle">Session</th>
+                    <th className="px-4 py-2.5 align-middle">Status</th>
+                    <th className="px-4 py-2.5 text-right align-middle tabular-nums">Attended</th>
+                    <th className="px-4 py-2.5 text-right align-middle tabular-nums">Absent</th>
+                    <th className="hidden px-4 py-2.5 text-right align-middle tabular-nums">Rate</th>
+                    <th className="px-4 py-2.5 text-right align-middle tabular-nums">Fines</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-8 text-center text-sm text-black">
+                        No events match the current filters.
+                      </td>
+                    </tr>
+                  )}
+                  {paginatedFiltered.map((ev) => (
+                    <tr
+                      key={ev.id}
                       role="button"
                       tabIndex={0}
-                      className="cursor-pointer rounded-xl border border-[#07713c]/30 bg-white p-4 transition-all hover:border-[#07713c]/50 hover:bg-[#07713c]/[0.06] hover:shadow-md"
-                      onClick={() => openEventModal(ev, "view")}
+                      onClick={() => openEventDetails(ev.id)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          openEventModal(ev, "view");
+                          openEventDetails(ev.id);
                         }
                       }}
+                      className="cursor-pointer border-t border-[#07713c]/20 hover:bg-[#07713c]/10"
                     >
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <h3 className="min-w-0 flex-1 line-clamp-2 text-base font-semibold leading-snug text-black sm:text-[1.0625rem]">
-                          {ev.name}
-                        </h3>
-                        <span
-                          className={`shrink-0 inline-flex items-center rounded-full px-2.5 py-1 text-sm font-medium ${getEventStatusClass(ev.status)}`}
-                        >
-                          {displayEventStatus(ev.status)}
+                      <td className="px-4 py-2.5 text-black">{ev.name}</td>
+                      <td className="px-4 py-2.5 text-black">
+                        {formatEventDateForDisplay(ev.date)}
+                      </td>
+                      <td className="px-4 py-2.5 text-black">
+                        {formatDurationForEventsListWithSessionHint(ev)}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(ev.status)}`}>
+                          {ev.status}
                         </span>
-                      </div>
-                      <p className="mb-1 text-sm font-medium text-black">{formatEventDateForDisplay(ev.date)}</p>
-                      <p className="mb-1 text-sm font-medium text-black">{ev.venue}</p>
-                      <p className="mb-2 text-sm font-medium text-black">{formatDurationForEventsList(ev)}</p>
-                      <div className="border-t border-[#07713c]/15 pt-2">
-                        <div className="flex items-baseline justify-between gap-3">
-                          <span className="shrink-0 text-xs font-medium text-black">Fines</span>
-                          <span className="min-w-[4.5rem] text-right text-sm font-semibold tabular-nums text-black">
-                            ₱{Number(getFinesForEvent(ev)).toLocaleString("en-PH")}
-                          </span>
-                        </div>
-                      </div>
-                      <div
-                        className="mt-3 flex flex-wrap justify-end gap-1.5"
-                        onClick={(e) => e.stopPropagation()}
-                        onKeyDown={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          type="button"
-                          className="rounded-md bg-[#07713c]/10 px-2.5 py-1 text-xs font-medium text-black hover:bg-[#07713c]/20"
-                          onClick={() => openEventModal(ev, "view")}
-                        >
-                          View
-                        </button>
-                        {canManageEvents && (
-                          <>
-                            <button
-                              type="button"
-                              title="Edit event"
-                              className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-blue-100"
-                              onClick={(e) => handleEditClick(ev, e)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-red-100"
-                              onClick={() => openDeleteFromRow(ev)}
-                            >
-                              Delete
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-black">{ev.attended}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-black">{ev.absent}</td>
+                      <td className="hidden px-4 py-2.5 text-right tabular-nums text-black">
+                        {ev.status === "upcoming" ? "—" : `${ratePct(ev.attended ?? 0, ev.totalStudents ?? 0)}%`}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-black">
+                        {formatPhp(ev.finePerAbsence ?? MOCK_FINE_PER_ABSENCE_PHP)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <PaginationBar
               totalCount={eventsTotal}
-              page={eventsPage}
-              pageSize={eventsPageSize}
-              onPageChange={setEventsPage}
-              emptyLabel="No records to show."
+              page={eventListPage}
+              pageSize={eventListPageSize}
+              onPageChange={setEventListPage}
+              emptyLabel="No events to show."
               itemLabel="events"
               className="!text-black"
             />
-          </div>
+          </section>
+          </>
+          )}
           </div>
         </main>
       </div>
-      {showAddEvent && (
-        <AddEvent onBack={() => setShowAddEvent(false)} onNext={() => {}} />
-      )}
 
-      {showReportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl overflow-hidden">
-            <div className="border-b border-[#07713c]/30 bg-[#07713c]/10 px-5 py-3">
-              <h3 className="font-semibold text-black">
-                {reportMode === "settings"
-                  ? `${roleLabel} Settings`
-                  : reportMode === "import"
-                    ? "Import Data"
-                    : "Export Data"}
-              </h3>
-            </div>
-            <div className="p-5 space-y-4 text-sm">
-              <p className="text-black">
-                {reportMode === "settings"
-                  ? "Settings are not implemented yet (this is a placeholder)."
-                  : reportMode === "import"
-                    ? "Choose what you want to import."
-                    : "Choose what you want to export."}
-              </p>
-              {reportMode !== "settings" && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    className="rounded-xl border border-[#07713c]/30 p-4 text-left transition-colors hover:border-[#07713c] hover:bg-[#07713c]/10"
-                    onClick={() => setShowReportModal(false)}
-                  >
-                    <p className="font-semibold text-black">
-                      {reportMode === "import" ? "Import Attendance" : "Export Attendance"}
-                    </p>
-                    <p className="text-xs text-black/75">
-                      {reportMode === "import"
-                        ? "Import attendance records into the system."
-                        : "Download attendance records for reports."}
-                    </p>
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-xl border border-[#07713c]/30 p-4 text-left transition-colors hover:border-[#07713c] hover:bg-[#07713c]/10"
-                    onClick={() => setShowReportModal(false)}
-                  >
-                    <p className="font-semibold text-black">
-                      {reportMode === "import" ? "Import Students" : "Export Students"}
-                    </p>
-                    <p className="text-xs text-black/75">
-                      {reportMode === "import"
-                        ? "Import student records into the system."
-                        : "Download student or department records."}
-                    </p>
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="px-4 py-3 border-t border-gray-200 flex justify-end">
-              <button type="button" onClick={() => setShowReportModal(false)} className="cursor-pointer rounded-lg border border-[#07713c] bg-[#07713c]/10 px-4 py-2 text-black hover:bg-[#07713c]/15">
+      {/* Drill-down */}
+      {false && detailEvent && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-5 shadow-xl">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="text-lg font-semibold text-black">{detailEvent!.name}</h3>
+                <p className="text-sm text-black">
+                  {formatEventDateForDisplay(detailEvent!.date)} · <span className="capitalize">{detailEvent!.status}</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailEventId(null)}
+                className="rounded-lg px-2 py-1 text-sm text-black hover:bg-[#07713c]/12"
+              >
                 Close
               </button>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* Edit blocked: Completed / Ongoing */}
-      {showEditNotAllowedModal && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="edit-not-allowed-title"
-          onClick={() => setShowEditNotAllowedModal(false)}
-        >
-          <div
-            className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="border-b border-[#07713c]/30 bg-[#07713c]/10 px-5 py-3">
-              <h3 id="edit-not-allowed-title" className="text-sm font-semibold text-black sm:text-base">
-                Editing not permitted
-              </h3>
-            </div>
-            <div className="space-y-3 px-5 py-4 text-sm leading-relaxed text-black/90">
-              <p>
-                <span className="font-semibold text-black">{editNotAllowedEventLabel}</span>
-                <span className="text-black/80"> cannot be edited at this time.</span>
-              </p>
-              <p>
-                For institutional accuracy, events whose status is <strong className="text-black">Completed</strong> or{" "}
-                <strong className="text-black">Ongoing</strong> are locked from modification in this module. If a
-                correction is required, please contact your administrator.
-              </p>
-            </div>
-            <div className="flex justify-end border-t border-gray-200 px-5 py-3">
-              <button
-                type="button"
-                className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#07713c]/15"
-                onClick={() => setShowEditNotAllowedModal(false)}
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Event details / edit modal */}
-      {selectedEvent && editableEvent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-[3px]">
-          <div className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#07713c]/30 bg-[#07713c]/10 px-6 py-3">
-              <h2 className="text-sm font-semibold text-black sm:text-base">
-                {eventModalMode === "view" ? "Event details" : "Edit event"}
-              </h2>
-              <button
-                type="button"
-                onClick={closeEventModal}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#ffb300] text-black transition-colors hover:bg-[#e6a100]"
-                aria-label="Close event modal"
-              >
-                <span className="text-lg font-bold">×</span>
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-sm [scrollbar-width:thin] [scrollbar-color:rgba(7,113,60,0.28)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#07713c]/30 [&::-webkit-scrollbar-thumb]:hover:bg-[#07713c]/40 [&::-webkit-scrollbar-track]:bg-transparent sm:p-5">
-              {eventModalMode === "edit" && (
-                <p className="rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.06] px-3 py-2 text-xs text-black">
-                  Save and delete are connected to the API.
-                </p>
-              )}
-              {editSaveError && (
-                <p className="text-xs text-black bg-amber-50 border border-amber-200 p-2 rounded-lg">{editSaveError}</p>
-              )}
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-black">Event Name</label>
-                <input
-                  type="text"
-                  readOnly={eventModalMode === "view"}
-                  className={`w-full rounded-lg border border-[#07713c]/40 px-3 py-2 text-black focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15 ${eventModalMode === "view" ? "bg-[#07713c]/5" : "bg-white"}`}
-                  value={editableEvent.name || ""}
-                  onChange={(e) => setEditableEvent({ ...editableEvent, name: e.target.value })}
-                />
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 text-sm">
+              <div className="rounded-lg bg-[#07713c]/5 p-2">
+                <span className="text-xs text-black">Students</span>
+                <p className="font-semibold">{detailEvent!.totalStudents}</p>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-black">Date</label>
-                  {eventModalMode === "view" ? (
-                    <p className="rounded-lg border border-[#07713c]/30 bg-[#07713c]/5 px-3 py-2 text-sm text-black">
-                      {formatEventDateForDisplay(editableEvent.date)}
-                    </p>
-                  ) : (
-                    <input
-                      type="date"
-                      className="w-full rounded-lg border border-[#07713c]/40 bg-white px-3 py-2 text-sm text-black focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15"
-                      value={eventYmdForDateInput(editableEvent.date)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setEditableEvent((prev) =>
-                          prev && v ? { ...prev, date: v } : prev,
-                        );
-                      }}
-                    />
-                  )}
+              <div className="rounded-lg bg-[#07713c]/10 p-2">
+                <span className="text-xs text-black">Attended</span>
+                <p className="font-semibold">{detailEvent!.attended}</p>
+              </div>
+              <div className="rounded-lg bg-red-50 p-2">
+                <span className="text-xs text-black">Absent</span>
+                <p className="font-semibold">{detailEvent!.absent}</p>
+              </div>
+              <div className="rounded-lg bg-red-50 p-2">
+                <span className="text-xs text-black">Total fines</span>
+                <p className="font-semibold text-black">{formatPhp(eventTotalFine(detailEvent))}</p>
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-black">
+              Fine rule: {detailEvent!.absent} absences × {formatPhp(detailEvent!.finePerAbsence ?? MOCK_FINE_PER_ABSENCE_PHP)} ={" "}
+              {formatPhp(eventTotalFine(detailEvent))}
+            </p>
+
+            <div className="mt-4 rounded-lg border border-[#07713c]/30 bg-[#07713c]/[0.08] p-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-black capitalize">
+                  {detailEvent!.status}
+                </span>
+                <span className="rounded-full bg-[#07713c]/10 px-2 py-0.5 text-xs text-black">{detailEventMeta!.type}</span>
+                <span className="rounded-full bg-[#07713c]/10 px-2 py-0.5 text-xs text-black">
+                  Registration: {detailEventMeta!.requiresRegistration}
+                </span>
+                <span className="rounded-full bg-[#07713c]/10 px-2 py-0.5 text-xs text-black">{detailEventMeta!.audience}</span>
+                <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-black">
+                  Fines: {formatPhp(eventTotalFine(detailEvent))}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-3 rounded-lg border border-[#07713c]/30 p-3">
+              <h4 className="text-sm font-semibold text-black">Schedule &amp; details</h4>
+              <div className="mt-2 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                <div className="rounded-lg bg-[#07713c]/5 p-2">
+                  <p className="text-xs text-black">Session</p>
+                  <p className="font-medium">{detailEventMeta!.duration}</p>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-black">Session</label>
-                  {eventModalMode === "view" ? (
-                    <p className="rounded-lg border border-[#07713c]/30 bg-[#07713c]/5 px-3 py-2 text-sm text-black">
-                      {formatDurationForEventsList(selectedEvent)}
-                    </p>
-                  ) : (
-                    <select
-                      className="w-full rounded-lg border border-[#07713c]/40 px-3 py-2 text-sm text-black focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15 bg-white"
-                      value={
-                        ["Whole Day", "AM Only", "PM Only"].includes(String(editableEvent.duration ?? "").trim())
-                          ? String(editableEvent.duration).trim()
-                          : "Whole Day"
-                      }
-                      onChange={(e) =>
-                        setEditableEvent((prev) => (prev ? { ...prev, duration: e.target.value } : prev))
-                      }
-                    >
-                      <option value="Whole Day">Whole Day</option>
-                      <option value="AM Only">AM Only</option>
-                      <option value="PM Only">PM Only</option>
-                    </select>
+                <div className="rounded-lg bg-[#07713c]/5 p-2">
+                  <p className="text-xs text-black">Schedule</p>
+                  {detailEventMeta!.hasAmSession && (
+                    <>
+                      <p className="font-medium">AM</p>
+                      <p className="text-xs text-black">{detailEventMeta!.scheduleAm ?? "—"}</p>
+                    </>
+                  )}
+                  {detailEventMeta!.hasPmSession && (
+                    <>
+                      <p className={detailEventMeta!.hasAmSession ? "mt-1 font-medium" : "font-medium"}>PM</p>
+                      <p className="text-xs text-black">{detailEventMeta!.schedulePm ?? "—"}</p>
+                    </>
                   )}
                 </div>
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-black">Venue</label>
-                <input
-                  type="text"
-                  readOnly={eventModalMode === "view"}
-                  className={`w-full rounded-lg border border-[#07713c]/40 px-3 py-2 text-black focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15 ${eventModalMode === "view" ? "bg-[#07713c]/5" : "bg-white"}`}
-                  value={editableEvent.venue || ""}
-                  onChange={(e) => setEditableEvent({ ...editableEvent, venue: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-black">Fines</label>
-                {eventModalMode === "view" ? (
-                  <p className="rounded-lg border border-[#07713c]/30 bg-[#07713c]/5 px-3 py-2 text-sm font-semibold tabular-nums text-black">
-                    ₱{Number(getFinesForEvent(selectedEvent)).toLocaleString("en-PH")}
-                  </p>
-                ) : (
-                  <div className="flex items-center gap-1 rounded-lg border border-[#07713c]/40 bg-white px-3 py-2 focus-within:border-[#07713c]/55 focus-within:ring-1 focus-within:ring-[#07713c]/15">
-                    <span className="shrink-0 text-sm font-semibold tabular-nums text-black">₱</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={1}
-                      inputMode="numeric"
-                      className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm font-semibold tabular-nums text-black placeholder:text-black/40 focus:outline-none focus:ring-0"
-                      placeholder="0"
-                      value={
-                        editableEvent.fine == null || editableEvent.fine === ""
-                          ? ""
-                          : Number(editableEvent.fine)
-                      }
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        setEditableEvent((prev) => {
-                          if (!prev) return prev;
-                          if (raw === "") return { ...prev, fine: null, fineAmount: null };
-                          const n = Number(raw);
-                          if (!Number.isFinite(n)) return prev;
-                          const v = Math.max(0, n);
-                          return { ...prev, fine: v, fineAmount: v };
-                        });
-                      }}
-                    />
-                  </div>
-                )}
-              </div>
-              <EventModalSchedule
-                ev={editableEvent}
-                readOnly={eventModalMode === "view"}
-                onPatch={eventModalMode === "edit" ? patchEditableEventSchedule : undefined}
-              />
-              {eventModalMode !== "view" && (
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-black">Audience scope</label>
-                  <p className="min-h-[2.5rem] rounded-lg border border-[#07713c]/30 bg-[#07713c]/5 px-3 py-2 text-sm text-black">
-                    {getAudienceScopeLabel(editableEvent)}
-                  </p>
-                </div>
-              )}
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-black">Audience notes</label>
-                {eventModalMode === "view" ? (
-                  <p className="min-h-[2.5rem] whitespace-pre-wrap rounded-lg border border-[#07713c]/30 bg-[#07713c]/5 px-3 py-2 text-sm text-black">
-                    {editableEvent.audience_notes != null && String(editableEvent.audience_notes).trim() !== ""
-                      ? editableEvent.audience_notes
+            </div>
+
+            <div className="mt-3 rounded-lg border border-[#07713c]/30 p-3">
+              <h4 className="text-sm font-semibold text-black">Late (time in)</h4>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded-lg bg-[#07713c]/5 p-2">
+                  <p className="text-xs text-black">AM late in</p>
+                  <p className="font-medium">
+                    {detailEventMeta!.lateAmIn != null
+                      ? formatGraceDurationLabel(detailEventMeta!.lateAmIn)
                       : "—"}
                   </p>
-                ) : (
-                  <textarea
-                    rows={3}
-                    className="w-full rounded-lg border border-[#07713c]/40 bg-white px-3 py-2 text-sm text-black placeholder:text-black/40 focus:border-[#07713c]/55 focus:outline-none focus:ring-1 focus:ring-[#07713c]/15"
-                    placeholder="Optional notes for this audience…"
-                    value={editableEvent.audience_notes ?? ""}
-                    onChange={(e) =>
-                      setEditableEvent((prev) => (prev ? { ...prev, audience_notes: e.target.value } : prev))
-                    }
-                  />
-                )}
-              </div>
-              <div className="space-y-1.5 text-sm text-black">
-                <p>
-                  <span className="font-semibold">Created by:</span>{" "}
-                  {editableEvent.created_by_username != null && String(editableEvent.created_by_username).trim() !== ""
-                    ? editableEvent.created_by_username
-                    : "—"}
-                </p>
-                <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="font-semibold">Status:</span>
-                  <span
-                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getEventModalStatusBadgeClass(editableEvent.status)}`}
-                  >
-                    {displayEventStatus(editableEvent.status).toLowerCase()}
-                  </span>
-                </p>
-                {eventModalMode === "edit" && (
-                  <p className="text-xs text-black/70">Status is updated automatically by the system.</p>
-                )}
+                </div>
+                <div className="rounded-lg bg-[#07713c]/5 p-2">
+                  <p className="text-xs text-black">PM late in</p>
+                  <p className="font-medium">
+                    {detailEventMeta!.latePmIn != null
+                      ? formatGraceDurationLabel(detailEventMeta!.latePmIn)
+                      : "—"}
+                  </p>
+                </div>
               </div>
             </div>
-            <div className="flex items-center justify-end border-t border-gray-200 px-4 py-3 sm:px-5">
-              <div className="flex gap-2">
-                {canManageEvents && eventModalMode === "edit" && (
-                  <button
-                    type="button"
-                    onClick={() => setShowDeleteConfirm(true)}
-                    className="px-4 py-2 text-sm rounded-lg border border-red-300 text-black hover:bg-red-50"
-                  >
-                    Delete
-                  </button>
-                )}
-                {canManageEvents && eventModalMode === "edit" && (
-                  <button
-                    type="button"
-                    onClick={saveEditableEvent}
-                    disabled={editEventMutation.isPending}
-                    className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-4 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {editEventMutation.isPending ? "Saving..." : "Save Changes"}
-                  </button>
-                )}
+
+            <div className="mt-3 rounded-lg border border-[#07713c]/30 p-3">
+              <h4 className="text-sm font-semibold text-black">Audience &amp; notes</h4>
+              <div className="mt-2 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                <div className="rounded-lg bg-[#07713c]/5 p-2">
+                  <p className="text-xs text-black">Audience</p>
+                  <p className="font-medium">{detailEventMeta!.audience}</p>
+                </div>
+                <div className="rounded-lg bg-[#07713c]/5 p-2">
+                  <p className="text-xs text-black">Notes</p>
+                  <p className="whitespace-pre-wrap font-medium">{detailEventMeta!.notes}</p>
+                </div>
               </div>
+            </div>
+
+            {detailEvent!.status !== "upcoming" && (
+              <>
+                <div className="mt-4 h-48 max-w-md mx-auto">
+                  <Pie
+                    data={{
+                      labels: ["Attended", "Absent"],
+                      datasets: [
+                        {
+                          data: [detailEvent!.attended, detailEvent!.absent],
+                          backgroundColor: ["rgba(7, 113, 60, 0.85)", "rgba(220, 38, 38, 0.7)"],
+                        },
+                      ],
+                    }}
+                    options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }}
+                  />
+                </div>
+
+                <h4 className="mt-4 text-sm font-semibold text-black">Student list</h4>
+                <div className="mt-2 overflow-x-auto rounded-lg border border-[#07713c]/30">
+                  <table className="w-full min-w-[420px] text-sm">
+                    <thead className="border-b border-[#07713c]/30 bg-[#ffb300] text-left text-xs font-semibold uppercase text-black">
+                      <tr>
+                        <th className="px-3 py-2">Name</th>
+                        <th className="px-3 py-2">Status</th>
+                        <th className="px-3 py-2 text-right">Fine</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(detailEvent!.students || []).map((s) => (
+                        <tr key={s.id} className="border-t border-[#07713c]/20">
+                          <td className="px-3 py-1.5 text-black">{s.name}</td>
+                          <td className="px-3 py-1.5 capitalize text-black">{s.status}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{s.finePhp ? formatPhp(s.finePhp) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {detailEvent!.status === "upcoming" && (
+              <p className="mt-4 text-sm text-black">No attendance recorded yet for this event.</p>
+            )}
+
+            <div className="mt-4 flex flex-wrap gap-2 border-t border-[#07713c]/20 pt-4">
+              <button
+                type="button"
+                onClick={() => onNavigate?.("students")}
+                className="rounded-lg border border-[#07713c]/40 bg-white px-3 py-2 text-sm font-medium hover:bg-[#07713c]/10"
+              >
+                Students list
+              </button>
+              <button
+                type="button"
+                onClick={() => exportCsvEvent(detailEvent!, isStudentListPath ? filteredStudentList : detailEvent!.students)}
+                className="rounded-lg border border-[#07713c]/40 bg-white px-3 py-2 text-sm font-medium hover:bg-[#07713c]/10"
+              >
+                Export Excel (CSV) — this event
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  exportPdfEvent(
+                    detailEvent!,
+                    isStudentListPath ? filteredStudentList : detailEvent!.students,
+                  )
+                }
+                className="rounded-lg border border-[#07713c]/40 bg-white px-3 py-2 text-sm font-medium hover:bg-[#07713c]/10"
+              >
+                Export PDF — this event
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete confirm (admin or governor) */}
-      {canManageEvents && showDeleteConfirm && selectedEvent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
-            <div className="bg-red-600 px-6 py-3">
-              <h3 className="text-sm sm:text-base font-semibold text-white">Delete Event</h3>
-            </div>
-            <div className="p-6 space-y-3 text-sm">
-              <p className="text-black">
-                Delete <span className="font-semibold">{selectedEvent.name}</span>?
+      {/* Export panel */}
+      {exportOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className={`w-full max-w-md rounded-xl bg-white p-5 shadow-xl ${ATTENDANCE_TEXT}`}>
+            <h3 className="text-lg font-semibold text-black">Export / reports</h3>
+            <p className="mt-2 text-sm text-black">
+              Download attendance data as CSV (Excel) or PDF. Filters below apply to both formats.
+            </p>
+            <div className="mt-3 rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-black">
+                All-events student export filters
               </p>
-              <p className="text-xs text-black/75">
-                This will permanently delete the event and its audience targets.
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <select
+                  value={exportAllEventId}
+                  onChange={(e) => setExportAllEventId(e.target.value)}
+                  className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30 sm:col-span-2"
+                >
+                  <option value="all">All events</option>
+                  {exportCompletedEventOptions.map((ev) => (
+                    <option key={ev.id} value={String(ev.id)}>
+                      {ev.name} - {formatEventDateForDisplay(ev.date)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={exportAllEventStatus}
+                  onChange={(e) => setExportAllEventStatus(e.target.value)}
+                  className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                >
+                  <option value="all">All event statuses</option>
+                  <option value="completed">Completed</option>
+                  <option value="ongoing">Ongoing</option>
+                  <option value="upcoming">Upcoming</option>
+                </select>
+                {SHOW_COLLEGE_MAJOR_FILTER_DROPDOWNS && (
+                <select
+                  value={exportAllCollege}
+                  onChange={(e) => setExportAllCollege(e.target.value)}
+                  className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                >
+                  <option value="all">All colleges</option>
+                  {exportAllCollegeOptions.map((college) => (
+                    <option key={college} value={college}>
+                      {college}
+                    </option>
+                  ))}
+                </select>
+                )}
+                <select
+                  value={exportAllCourse}
+                  onChange={(e) => setExportAllCourse(e.target.value)}
+                  className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                >
+                  <option value="all">All courses</option>
+                  {exportAllCourseOptions.map((course) => (
+                    <option key={course} value={course}>
+                      {course}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="mt-2 text-xs text-black/80">
+                {exportAllFilteredRows.length} student record(s) match these filters.
               </p>
-              {deleteError && <p className="text-xs text-black bg-red-50 border border-red-200 p-2 rounded-lg">{deleteError}</p>}
             </div>
-            <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-end gap-2">
+            {detailEvent ? (
+              <div className="mt-3 rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-black">
+                  Current event filters - {detailEvent.name}
+                </p>
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <input
+                    type="search"
+                    value={exportEventSearch}
+                    onChange={(e) => setExportEventSearch(e.target.value)}
+                    placeholder="Search name, ID, or year level"
+                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black placeholder:text-black/45 focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30 sm:col-span-2"
+                  />
+                  {SHOW_COLLEGE_MAJOR_FILTER_DROPDOWNS && (
+                  <select
+                    value={exportEventCollege}
+                    onChange={(e) => setExportEventCollege(e.target.value)}
+                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30 sm:col-span-2"
+                  >
+                    <option value="all">All colleges</option>
+                    {studentListCollegeOptions.map((col) => (
+                      <option key={col} value={col}>
+                        {col}
+                      </option>
+                    ))}
+                  </select>
+                  )}
+                  <select
+                    value={exportEventCourse}
+                    onChange={(e) => setExportEventCourse(e.target.value)}
+                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                  >
+                    <option value="all">All courses</option>
+                    {exportEventCourses.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                  {SHOW_COLLEGE_MAJOR_FILTER_DROPDOWNS && (
+                  <select
+                    value={exportEventMajor}
+                    onChange={(e) => setExportEventMajor(e.target.value)}
+                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                  >
+                    <option value="all">All majors</option>
+                    {exportEventMajorOptions.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  )}
+                  <select
+                    value={exportEventYearLevel}
+                    onChange={(e) => setExportEventYearLevel(e.target.value)}
+                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30 sm:col-span-2"
+                  >
+                    <option value="all">All year levels</option>
+                    {studentListYearLevelOptions.map((yl) => (
+                      <option key={yl} value={String(yl)}>
+                        {yl}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={exportEventAttendance}
+                    onChange={(e) => setExportEventAttendance(e.target.value)}
+                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="attended">Attended</option>
+                    <option value="absent">Absent</option>
+                    {detailEvent.status === "upcoming" ? <option value="no_record">No record</option> : null}
+                  </select>
+                </div>
+                <p className="mt-2 text-xs text-black/80">
+                  {exportFilteredEventStudents.length} student(s) match these filters.
+                </p>
+              </div>
+            ) : null}
+            <div className="mt-4 space-y-2">
               <button
                 type="button"
-                onClick={() => setShowDeleteConfirm(false)}
-                disabled={deleteEventMutation.isPending}
-                className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-black hover:bg-gray-50"
+                onClick={() => {
+                  exportCsvAll();
+                  setExportOpen(false);
+                }}
+                className="w-full rounded-lg border border-[#07713c] bg-[#07713c]/10 px-4 py-2.5 text-sm font-medium text-black hover:bg-[#07713c]/15"
               >
-                Cancel
+                Download CSV — all events (students)
               </button>
               <button
                 type="button"
-                onClick={handleDeleteSelectedEvent}
-                disabled={deleteEventMutation.isPending}
-                className="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => {
+                  exportPdfAll();
+                  setExportOpen(false);
+                }}
+                className="w-full rounded-lg border border-[#07713c]/40 px-4 py-2.5 text-sm font-medium text-black hover:bg-[#07713c]/10"
               >
-                {deleteEventMutation.isPending ? "Deleting..." : "Delete"}
+                Download PDF — all events (students)
+              </button>
+              <button
+                type="button"
+                disabled={!detailEvent}
+                onClick={() => {
+                  if (!detailEvent) return;
+                  exportCsvEvent(detailEvent, exportFilteredEventStudents);
+                  setExportOpen(false);
+                }}
+                className={`w-full rounded-lg border px-4 py-2.5 text-sm font-medium ${
+                  detailEvent
+                    ? "border-[#07713c]/40 text-black hover:bg-[#07713c]/10"
+                    : "border-[#07713c]/20 text-black/50"
+                }`}
+              >
+                Download CSV — current event (filtered students)
+              </button>
+              <button
+                type="button"
+                disabled={!detailEvent}
+                onClick={() => {
+                  if (!detailEvent) return;
+                  exportPdfEvent(detailEvent, exportFilteredEventStudents);
+                  setExportOpen(false);
+                }}
+                className={`w-full rounded-lg border px-4 py-2.5 text-sm font-medium ${
+                  detailEvent
+                    ? "border-[#07713c]/40 text-black hover:bg-[#07713c]/10"
+                    : "border-[#07713c]/20 text-black/50"
+                }`}
+              >
+                Download PDF — current event (filtered students)
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => setExportOpen(false)}
+              className="mt-4 w-full rounded-lg border border-[#07713c]/30 py-2 text-sm text-black hover:bg-[#07713c]/10"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

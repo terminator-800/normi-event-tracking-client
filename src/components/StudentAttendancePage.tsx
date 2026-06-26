@@ -5,7 +5,7 @@ import SidebarBrand from "./SidebarBrand";
 import UserCircleIcon from "./UserCircleIcon";
 import SidebarUserFullName from "./SidebarUserFullName";
 import { useGovernorScope } from "../hooks/useGovernorScope";
-import { getAppNavItems } from "../utils/appNav";
+import { getAppNavItems, resolveNavRoute } from "../utils/appNav";
 import { getDashboardRoleLabel } from "../utils/roles";
 import type { DeskPageProps } from "../types/desk-pages";
 import StudentAttendanceDashboard from "./StudentAttendanceDashboard";
@@ -29,21 +29,15 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
 
 
   const handleNav = (itemId: string) => {
-    if (itemId === "attendance_students") {
-      navigate("/students");
-      return;
-    }
-    if (itemId === "attendance") {
-      navigate("/attendance");
+    const route = resolveNavRoute(itemId);
+    if (route) {
+      navigate(route);
       return;
     }
     onNavigate?.(itemId);
   };
 
-  const navActive = (itemId: string) => {
-    if (itemId === "attendance_students") return true;
-    return false;
-  };
+  const navActive = (itemId: string) => itemId === "students";
 
   return (
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">

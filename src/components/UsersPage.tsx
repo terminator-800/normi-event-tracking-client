@@ -62,7 +62,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
 
   useEffect(() => {
     if (isAdmin) return;
-    onNavigate?.("attendance");
+    onNavigate?.("events");
   }, [isAdmin, onNavigate]);
 
   if (!isAdmin) {

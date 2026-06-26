@@ -281,7 +281,7 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
     }
   }, [showEventDetailModal, selectedUpcomingEvent, upcomingEvents]);
 
-  const activeNav = SHOW_DASHBOARD_IN_NAV ? "dashboard" : "attendance";
+  const activeNav = SHOW_DASHBOARD_IN_NAV ? "dashboard" : "events";
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
   const isAdmin = String(role || "").toLowerCase().trim() === "admin";
   const sessionDisplayName = getNavDisplayNameFromSession(session);

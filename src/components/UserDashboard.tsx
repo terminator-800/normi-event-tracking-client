@@ -226,38 +226,30 @@ export default function UserDashboard({ onLogout, onNavigate }: DeskPageProps) {
           ) : null}
 
           <button
-            onClick={() => onNavigate?.("attendance")}
+            onClick={() => onNavigate?.("events")}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
               SHOW_DASHBOARD_IN_NAV ? "text-green-100 hover:bg-white/15" : "bg-[#055a2e] text-white"
             }`}
           >
-            <SidebarNavIcon navId="attendance" />
-            Attendance
+            <SidebarNavIcon navId="events" />
+            Events
           </button>
 
           <button
             type="button"
-            onClick={() => onNavigate?.("attendance_students")}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
-          >
-            <SidebarNavIcon navId="attendance_students" />
-            Students
-          </button>
-
-          <button
-            onClick={() => onNavigate?.("events")}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
-          >
-            <SidebarNavIcon navId="events" />
-            Manage Event
-          </button>
-
-          <button
             onClick={() => onNavigate?.("students")}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
           >
             <SidebarNavIcon navId="students" />
-            Department
+            Students
+          </button>
+
+          <button
+            onClick={() => onNavigate?.("manage_events")}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
+          >
+            <SidebarNavIcon navId="manage_events" />
+            Manage Event
           </button>
         </nav>
       </aside>

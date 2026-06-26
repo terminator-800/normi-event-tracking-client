@@ -42,18 +42,7 @@ function IconEvents(props: IconProps) {
   );
 }
 
-function IconDepartment(props: IconProps) {
-  return (
-    <svg {...common} {...props}>
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  );
-}
-
-/** Single-student silhouette — used for Attendance → Students filter view (distinct from Department). */
+/** Single-student silhouette — Students nav. */
 function IconStudents(props: IconProps) {
   return (
     <svg {...common} {...props}>
@@ -105,13 +94,12 @@ function IconUsers(props: IconProps) {
 
 const MAP = {
   dashboard: IconDashboard,
-  attendance: IconAnalytics,
+  events: IconAnalytics,
+  students: IconStudents,
   payment: IconPayment,
-  events: IconEvents,
+  manage_events: IconEvents,
   import: IconImport,
   users: IconUsers,
-  students: IconDepartment,
-  attendance_students: IconStudents,
 } as const;
 
 export type SidebarNavId = AppNavId;

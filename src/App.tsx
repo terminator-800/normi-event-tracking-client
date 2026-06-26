@@ -1,22 +1,40 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import LoginDashboard from "./components/LoginDashboard";
 import Home from "./components/Home";
-import Attendance from "./components/Attendance";
-import StudentAttendancePage from "./components/StudentAttendancePage";
 import Events from "./components/Events";
+import StudentAttendancePage from "./components/StudentAttendancePage";
+import ManageEvents from "./components/ManageEvents";
 import Payments from "./components/Payments";
 import ImportPage from "./components/ImportPage";
 import UsersPage from "./components/UsersPage";
 import CreateUserModal from "./components/CreateUserModal";
 import { AUTH_SESSION_QUERY_KEY, useAuthSession, useLogout } from "./hooks/auth";
-import { DEFAULT_LOGGED_IN_ROUTE } from "./utils/appNav";
+import {
+  APP_ROUTES,
+  DEFAULT_LOGGED_IN_ROUTE,
+  eventsEventPath,
+  eventsEventStudentsPath,
+  resolveNavRoute,
+} from "./utils/appNav";
 import { CURRENT_EVENT_QUERY_KEY } from "./hooks/useGetCurrentEvent";
 import { EVENTS_QUERY_KEY } from "./hooks/useGetEvents";
 import type { AuthSession } from "./types/api";
 
 type LoginSuccessOptions = { redirectTo?: string };
+
+function LegacyAttendanceEventRedirect() {
+  const { eventId } = useParams();
+  if (!eventId) return <Navigate to={APP_ROUTES.events} replace />;
+  return <Navigate to={eventsEventPath(eventId)} replace />;
+}
+
+function LegacyAttendanceEventStudentsRedirect() {
+  const { eventId } = useParams();
+  if (!eventId) return <Navigate to={APP_ROUTES.events} replace />;
+  return <Navigate to={eventsEventStudentsPath(eventId)} replace />;
+}
 
 function App() {
   const navigate = useNavigate();
@@ -72,24 +90,12 @@ function App() {
   };
 
   const handleNavigate = (page: string) => {
-    const normalizedPage = String(page || "").toLowerCase().trim();
-    if (normalizedPage === "attendance_students") {
-      navigate("/students");
-      return;
-    }
-    const pageRoutes: Record<string, string> = {
-      dashboard: "/dashboard",
-      attendance: "/attendance",
-      payment: "/payments",
-      events: "/events",
-      import: "/import",
-      users: "/users",
-    };
-    navigate(pageRoutes[normalizedPage] || defaultRoute);
+    const route = resolveNavRoute(page);
+    navigate(route ?? defaultRoute);
   };
 
   const openCreateUser = () => {
-    navigate("/users");
+    navigate(APP_ROUTES.users);
   };
   const closeCreateUser = () => setIsCreateUserOpen(false);
 
@@ -130,12 +136,24 @@ function App() {
             path="/dashboard"
             element={<Navigate to={defaultRoute} replace />}
           />
-          <Route path="/attendance" element={<Attendance {...deskProps} />} />
-          <Route path="/students" element={<StudentAttendancePage {...deskProps} />} />
-          <Route path="/attendance/event/:eventId" element={<Attendance {...deskProps} />} />
-          <Route path="/attendance/event/:eventId/students" element={<Attendance {...deskProps} />} />
-          <Route path="/events" element={<Events {...deskProps} />} />
-          <Route path="/payments" element={<Payments {...deskProps} />} />
+          <Route path={APP_ROUTES.events} element={<Events {...deskProps} />} />
+          <Route path={`${APP_ROUTES.events}/:eventId`} element={<Events {...deskProps} />} />
+          <Route path={`${APP_ROUTES.events}/:eventId/students`} element={<Events {...deskProps} />} />
+          <Route path={APP_ROUTES.students} element={<StudentAttendancePage {...deskProps} />} />
+          <Route path={APP_ROUTES.manageEvents} element={<ManageEvents {...deskProps} />} />
+          <Route path={APP_ROUTES.payments} element={<Payments {...deskProps} />} />
+          <Route
+            path="/attendance"
+            element={<Navigate to={APP_ROUTES.events} replace />}
+          />
+          <Route
+            path="/attendance/event/:eventId"
+            element={<LegacyAttendanceEventRedirect />}
+          />
+          <Route
+            path="/attendance/event/:eventId/students"
+            element={<LegacyAttendanceEventStudentsRedirect />}
+          />
           <Route
             path="/import"
             element={
