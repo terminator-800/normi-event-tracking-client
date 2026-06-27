@@ -1,13 +1,15 @@
 import { type ChangeEvent, useMemo, useRef, useState } from "react";
 import SidebarNavIcon from "./SidebarNavIcon";
+import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
 import UserCircleIcon from "./UserCircleIcon";
 import PaginationBar from "./PaginationBar";
 import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel } from "../utils/roles";
+import { getDashboardRoleLabel, hasAdminDeskAccess, isSuperAdminRole } from "../utils/roles";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { useImportStudentsCsv } from "../hooks/useImportStudentsCsv";
+import { useActiveAcademicPeriod } from "../hooks/useAcademicPeriods";
 import {
   DATA_RESET_CONFIRMATION_PHRASE,
   useDataReset,
@@ -114,7 +116,7 @@ const EXISTING_STUDENTS_PAGE_SIZE = 10;
 export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
   const { role, isGovernor, governorScope } = useGovernorScope();
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
-  const isAdmin = String(role || "").toLowerCase().trim() === "admin";
+  const isAdmin = hasAdminDeskAccess(role);
   const [showLogout, setShowLogout] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportMode] = useState("export");
@@ -128,7 +130,10 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
   const [resetAcknowledged, setResetAcknowledged] = useState(false);
   const [resetMessage, setResetMessage] = useState("");
   const [resetError, setResetError] = useState("");
+  const [showNoActivePeriodModal, setShowNoActivePeriodModal] = useState(false);
   const importMutation = useImportStudentsCsv();
+  const { data: activeAcademicPeriod, isLoading: isActivePeriodLoading } = useActiveAcademicPeriod(isAdmin);
+  const hasActiveAcademicPeriod = Boolean(activeAcademicPeriod?.id);
   const {
     data: resetPreview,
     refetch: refetchResetPreview,
@@ -137,7 +142,7 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
   const resetMutation = useDataReset();
   const resetCounts = resetPreview as DataResetPreviewCounts | undefined;
 
-  const navItems = getAppNavItems({ isAdmin });
+  const navItems = getAppNavItems({ isAdmin, isSuperAdmin: isSuperAdminRole(role) });
 
   const preview = useMemo(() => parseCsvPreview(previewText), [previewText]);
   const headerValidation = useMemo(
@@ -214,6 +219,10 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
       fileInputRef.current?.click();
       return;
     }
+    if (!isActivePeriodLoading && !hasActiveAcademicPeriod) {
+      setShowNoActivePeriodModal(true);
+      return;
+    }
     if (!headerValidation.valid) {
       setError(headerValidation.message || "CSV is empty.");
       return;
@@ -224,7 +233,16 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
     importMutation.mutate(fileToImport, {
       onSuccess: (data) => setResult(data as StudentCsvImportResult),
       onError: (err) => {
-        setError(getApiErrorMessage(err, "Import failed."));
+        const message = getApiErrorMessage(err, "Import failed.");
+        const isMissingActivePeriod =
+          err.response?.status === 403 &&
+          /active school year|academic period/i.test(message);
+        if (isMissingActivePeriod) {
+          setShowNoActivePeriodModal(true);
+          setError("");
+          return;
+        }
+        setError(message);
       },
       onSettled: () => {
         setSelectedFile(null);
@@ -259,9 +277,12 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
           <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
-            <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
-              Import Students CSV
-            </h1>
+            <div>
+              <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
+                Import Students CSV
+              </h1>
+              <NavbarAcademicPeriod className="mt-1" />
+            </div>
             <div className="flex items-center gap-4">
               <div className="relative">
                 <button
@@ -318,6 +339,11 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
               {preview.headers.length > 0 && !headerValidation.valid && (
                 <p className="text-sm text-black">{headerValidation.message}</p>
               )}
+              {!isActivePeriodLoading && !hasActiveAcademicPeriod ? (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  Student import is disabled until a super admin activates a school year and semester.
+                </p>
+              ) : null}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -533,6 +559,39 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
           </div>
         </main>
       </div>
+
+      {showNoActivePeriodModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden">
+            <div className="border-b border-amber-200 bg-amber-50 px-5 py-4">
+              <h3 className="text-lg font-semibold text-amber-950">Cannot import students yet</h3>
+            </div>
+            <div className="space-y-4 p-5 text-sm text-black">
+              <p>
+                There is no <span className="font-semibold">active school year and semester</span> configured for the
+                system right now.
+              </p>
+              <p>
+                Student CSV imports are linked to the active academic period. Before you can import, a super admin must
+                create and activate a school year and semester under <span className="font-semibold">Academic Settings</span>.
+              </p>
+              <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-black/80">
+                After activation, return here and upload your CSV again. Imported enrollments will be tied to that
+                active period.
+              </p>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowNoActivePeriodModal(false)}
+                  className="rounded-lg bg-[#07713c] px-4 py-2 text-sm font-medium text-white hover:bg-[#055a2e]"
+                >
+                  OK, got it
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showReportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">

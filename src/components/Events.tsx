@@ -4,6 +4,7 @@ import { Pie } from "react-chartjs-2";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
+import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarNavIcon from "./SidebarNavIcon";
 import SidebarBrand from "./SidebarBrand";
 import UserCircleIcon from "./UserCircleIcon";
@@ -13,7 +14,7 @@ import {
   eventsEventStudentsPath,
   getAppNavItems,
 } from "../utils/appNav";
-import { getDashboardRoleLabel } from "../utils/roles";
+import { getDashboardRoleLabel, hasAdminDeskAccess, isSuperAdminRole } from "../utils/roles";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { useAttendancePageEvents } from "../hooks/useAttendancePageEvents";
 import { fetchAttendancePageEventDetail, useAttendancePageEventDetail } from "../hooks/useAttendancePageEventDetail";
@@ -256,7 +257,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
   const { eventId } = useParams();
   const { role, isGovernor, governorScope } = useGovernorScope();
   void getDashboardRoleLabel(isGovernor, governorScope, role);
-  const isAdmin = String(role || "").toLowerCase().trim() === "admin";
+  const isAdmin = hasAdminDeskAccess(role);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -737,7 +738,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
     }
   }, [exportAllEventId, exportCompletedEventOptions]);
 
-  const navItems = getAppNavItems({ isAdmin });
+  const navItems = getAppNavItems({ isAdmin, isSuperAdmin: isSuperAdminRole(role) });
 
 
   const handleNav = (itemId: string) => {
@@ -975,6 +976,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
               <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">
                 Events
               </h1>
+              <NavbarAcademicPeriod className="mt-1" />
             </div>
             <div className="flex items-center gap-3">
               <button

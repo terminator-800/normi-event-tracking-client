@@ -4,7 +4,7 @@ import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
 import UserCircleIcon from "./UserCircleIcon";
 import { getAppNavItems, SHOW_DASHBOARD_IN_NAV } from "../utils/appNav";
-import { getDashboardRoleLabel, getNavDisplayNameFromSession } from "../utils/roles";
+import { getDashboardRoleLabel, getNavDisplayNameFromSession, hasAdminDeskAccess, isSuperAdminRole } from "../utils/roles";
 import { useAuthSession, useCreateDepartmentUser } from "../hooks/auth";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { useGetEvents, formatEventDateForDisplay } from "../hooks/useGetEvents";
@@ -283,7 +283,7 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
 
   const activeNav = SHOW_DASHBOARD_IN_NAV ? "dashboard" : "events";
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
-  const isAdmin = String(role || "").toLowerCase().trim() === "admin";
+  const isAdmin = hasAdminDeskAccess(role);
   const sessionDisplayName = getNavDisplayNameFromSession(session);
   const headerName = sessionDisplayName ? `Welcome, ${sessionDisplayName}` : `Welcome, ${roleLabel}`;
   const { mutate: createDepartmentUser, isPending: isCreatingDepartmentUser } =
@@ -340,7 +340,7 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
     return selected?.majors || [];
   }, [createUserForm.department]);
 
-  const navItems = getAppNavItems({ isAdmin });
+  const navItems = getAppNavItems({ isAdmin, isSuperAdmin: isSuperAdminRole(role) });
 
 
   const closeCreateUserModal = () => {

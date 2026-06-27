@@ -3,6 +3,7 @@ import AddEvent from "./AddEvent";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
 import SidebarNavIcon from "./SidebarNavIcon";
+import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
 import UserCircleIcon from "./UserCircleIcon";
@@ -11,7 +12,7 @@ import { useEditEvent } from "../hooks/useEditEvent";
 import { useDeleteEvent } from "../hooks/useDeleteEvent";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel, isCsgPresident } from "../utils/roles";
+import { getDashboardRoleLabel, hasAdminDeskAccess, isCsgPresident, isSuperAdminRole } from "../utils/roles";
 import { formatEventDateForDisplay, formatSqlTimeForDisplay } from "../hooks/useGetEvents";
 import {
   formatDurationForEventsList,
@@ -484,7 +485,8 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
   const activeNav = "manage_events";
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
   const isCsgRole = isCsgPresident(role);
-  const isAdmin = String(role || "").toLowerCase().trim() === "admin";
+  const isAdmin = hasAdminDeskAccess(role);
+  const isSuperAdmin = isSuperAdminRole(role);
   /** Admins and department governors can create and edit events */
   const canManageEvents = isAdmin || isGovernor || isCsgRole;
   /**
@@ -507,7 +509,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
     return FINE_PER_ABSENT;
   };
 
-  const navItems = getAppNavItems({ isAdmin });
+  const navItems = getAppNavItems({ isAdmin, isSuperAdmin });
 
 
   /** Live events from API only. */
@@ -704,7 +706,10 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
         {/* Header */}
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
           <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3">
-            <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">Manage Event</h1>
+            <div>
+              <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">Manage Event</h1>
+              <NavbarAcademicPeriod className="mt-1" />
+            </div>
             <div className="flex items-center gap-4">
               <div className="relative flex items-center gap-2">
                 <button

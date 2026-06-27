@@ -92,6 +92,18 @@ function IconUsers(props: IconProps) {
   );
 }
 
+function IconAcademicSettings(props: IconProps) {
+  return (
+    <svg {...common} {...props}>
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <path d="M8 7h8" />
+      <path d="M8 11h8" />
+      <path d="M8 15h5" />
+      <circle cx="17" cy="15" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 const MAP = {
   dashboard: IconDashboard,
   events: IconAnalytics,
@@ -100,6 +112,7 @@ const MAP = {
   manage_events: IconEvents,
   import: IconImport,
   users: IconUsers,
+  academic_settings: IconAcademicSettings,
 } as const;
 
 export type SidebarNavId = AppNavId;

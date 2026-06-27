@@ -8,6 +8,7 @@ export const APP_ROUTES = {
   manageEvents: "/manage-events",
   import: "/import",
   users: "/users",
+  academicSettings: "/academic-settings",
   dashboard: "/dashboard",
 } as const;
 
@@ -22,7 +23,8 @@ export type AppNavId =
   | "payment"
   | "manage_events"
   | "import"
-  | "users";
+  | "users"
+  | "academic_settings";
 
 export type AppNavItem = { id: AppNavId; label: string };
 
@@ -45,6 +47,7 @@ export function resolveNavRoute(navId: string): string | null {
     manage_events: APP_ROUTES.manageEvents,
     import: APP_ROUTES.import,
     users: APP_ROUTES.users,
+    academic_settings: APP_ROUTES.academicSettings,
     // legacy nav ids (pre-rename)
     attendance: APP_ROUTES.events,
     attendance_students: APP_ROUTES.students,
@@ -52,13 +55,24 @@ export function resolveNavRoute(navId: string): string | null {
   return routes[id] ?? null;
 }
 
-export function getAppNavItems({ isAdmin = false }: { isAdmin?: boolean } = {}): AppNavItem[] {
-  return [
+export function getAppNavItems({
+  isAdmin = false,
+  isSuperAdmin = false,
+}: { isAdmin?: boolean; isSuperAdmin?: boolean } = {}): AppNavItem[] {
+  const deskNav: AppNavItem[] = [
     ...(SHOW_DASHBOARD_IN_NAV ? [{ id: "dashboard" as const, label: "Dashboard" }] : []),
     { id: "events", label: "Events" },
     { id: "students", label: "Students" },
     { id: "payment", label: "Payments" },
     { id: "manage_events", label: "Manage Event" },
-    ...(isAdmin ? [{ id: "import" as const, label: "Import" }, { id: "users" as const, label: "Users" }] : []),
+    ...(isAdmin || isSuperAdmin
+      ? [{ id: "import" as const, label: "Import" }, { id: "users" as const, label: "Users" }]
+      : []),
   ];
+
+  if (isSuperAdmin) {
+    return [...deskNav, { id: "academic_settings", label: "Academic Settings" }];
+  }
+
+  return deskNav;
 }

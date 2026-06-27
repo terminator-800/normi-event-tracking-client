@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SidebarNavIcon from "./SidebarNavIcon";
+import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import UserCircleIcon from "./UserCircleIcon";
 import SidebarUserFullName from "./SidebarUserFullName";
 import PaginationBar from "./PaginationBar";
 import { useGovernorScope } from "../hooks/useGovernorScope";
-import { getDashboardRoleLabel, getFullNameFromSession, getNavDisplayNameFromSession } from "../utils/roles";
+import { getDashboardRoleLabel, getFullNameFromSession, getNavDisplayNameFromSession, hasAdminDeskAccess, isSuperAdminRole } from "../utils/roles";
 import { useAuthSession } from "../hooks/auth";
 import { formatEventDateForDisplay } from "../hooks/useGetEvents";
 import { lookupPaymentStudent, useGetPaymentStudent, useGetPaymentSummary, useGetPayments, useGetPaymentTransactions } from "../hooks/useGetPayments";
@@ -243,8 +244,8 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
   void getDashboardRoleLabel(isGovernor, governorScope, role);
   const encoderDisplayName =
     getFullNameFromSession(session) || getNavDisplayNameFromSession(session) || "—";
-  const isAdmin = String(role || "").toLowerCase().trim() === "admin";
-  const navItems = getAppNavItems({ isAdmin });
+  const isAdmin = hasAdminDeskAccess(role);
+  const navItems = getAppNavItems({ isAdmin, isSuperAdmin: isSuperAdminRole(role) });
   const { data: paymentSummary } = useGetPaymentSummary();
   const { data: paymentTransactions = [], isLoading: isTransactionsLoading, isError: isTransactionsError } =
     useGetPaymentTransactions() as {
@@ -649,7 +650,10 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="bg-white border-b border-[#07713c]/30 px-6 py-4">
           <div className="mx-auto flex w-full max-w-7xl items-start justify-between gap-4">
-            <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">Payments</h1>
+            <div>
+              <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">Payments</h1>
+              <NavbarAcademicPeriod className="mt-1" />
+            </div>
             <div className="flex items-center gap-3">
               <button
                 type="button"

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import SidebarNavIcon from "./SidebarNavIcon";
+import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
 import UserCircleIcon from "./UserCircleIcon";
 import CreateUserModal from "./CreateUserModal";
 import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel } from "../utils/roles";
+import { getDashboardRoleLabel, hasAdminDeskAccess, isSuperAdminRole } from "../utils/roles";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { useDeleteUser, useUpdateUser, useUsersList } from "../hooks/useUsersManagement";
 import { getApiErrorMessage, type UserRecord } from "../types/api";
@@ -35,7 +36,7 @@ const TABLE_CELL_NOWRAP = "[&_th]:whitespace-nowrap [&_tbody_td]:whitespace-nowr
 export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
   const { role, isGovernor, governorScope } = useGovernorScope();
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
-  const isAdmin = String(role || "").toLowerCase().trim() === "admin";
+  const isAdmin = hasAdminDeskAccess(role);
   const [showLogout, setShowLogout] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | number | null>(null);
@@ -47,7 +48,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
   const updateUserMutation = useUpdateUser();
   const deleteUserMutation = useDeleteUser();
 
-  const navItems = getAppNavItems({ isAdmin });
+  const navItems = getAppNavItems({ isAdmin, isSuperAdmin: isSuperAdminRole(role) });
 
   const sortedUsers = useMemo(
     () => [...users].sort((a, b) => Number(a.id) - Number(b.id)),
@@ -138,9 +139,12 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
           <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
-            <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
-              User Management
-            </h1>
+            <div>
+              <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
+                User Management
+              </h1>
+              <NavbarAcademicPeriod className="mt-1" />
+            </div>
             <div className="relative">
               <button
                 type="button"
