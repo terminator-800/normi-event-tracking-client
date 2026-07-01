@@ -1,13 +1,16 @@
 import { type ChangeEvent, useMemo, useRef, useState } from "react";
+import axiosApi from "../api/axiosInstance";
 import SidebarNavIcon from "./SidebarNavIcon";
+import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
 import UserCircleIcon from "./UserCircleIcon";
 import PaginationBar from "./PaginationBar";
 import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel } from "../utils/roles";
+import { getDashboardRoleLabel, isCsgPresident } from "../utils/roles";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { useImportStudentsCsv } from "../hooks/useImportStudentsCsv";
+import { useActiveAcademicPeriod } from "../hooks/useAcademicPeriods";
 import {
   DATA_RESET_CONFIRMATION_PHRASE,
   useDataReset,
@@ -114,7 +117,24 @@ const EXISTING_STUDENTS_PAGE_SIZE = 10;
 export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
   const { role, isGovernor, governorScope } = useGovernorScope();
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
-  const isAdmin = String(role || "").toLowerCase().trim() === "admin";
+  const normalizedRole = String(role || "").toLowerCase().trim();
+  const isAdmin = normalizedRole === "admin";
+  const isSuperAdmin = normalizedRole === "super_admin";
+  const isCsg = isCsgPresident(normalizedRole);
+  const canManage = isAdmin || isSuperAdmin;
+
+  // ── Excel import state (CSG President only) ──────────────────────────────
+  const xlsxInputRef = useRef<HTMLInputElement>(null);
+  const [xlsxFile, setXlsxFile] = useState<File | null>(null);
+  const [xlsxPreview, setXlsxPreview] = useState<null | {
+    valid: boolean; message: string;
+    eventId?: number | null; eventName?: string; eventDate?: string;
+    studentCount?: number; paymentCount?: number;
+    exportedBy?: string; exportDate?: string;
+  }>(null);
+  const [xlsxImporting, setXlsxImporting] = useState(false);
+  const [xlsxResult, setXlsxResult] = useState<null | { success: boolean; message: string; attendanceCreated: number; attendanceSkipped: number }>(null);
+  const [xlsxDragging, setXlsxDragging] = useState(false);
   const [showLogout, setShowLogout] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportMode] = useState("export");
@@ -128,16 +148,58 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
   const [resetAcknowledged, setResetAcknowledged] = useState(false);
   const [resetMessage, setResetMessage] = useState("");
   const [resetError, setResetError] = useState("");
+  const [showNoActivePeriodModal, setShowNoActivePeriodModal] = useState(false);
   const importMutation = useImportStudentsCsv();
+  const { data: activeAcademicPeriod, isLoading: isActivePeriodLoading } = useActiveAcademicPeriod(canManage);
+  const hasActiveAcademicPeriod = Boolean(activeAcademicPeriod?.id);
   const {
     data: resetPreview,
     refetch: refetchResetPreview,
     isFetching: isResetPreviewLoading,
-  } = useDataResetPreview({ enabled: isAdmin });
+  } = useDataResetPreview({ enabled: canManage });
   const resetMutation = useDataReset();
   const resetCounts = resetPreview as DataResetPreviewCounts | undefined;
 
-  const navItems = getAppNavItems({ isAdmin });
+  const navItems = getAppNavItems({ isAdmin: canManage, isSuperAdmin, isCsgPresident: isCsg });
+
+  const handleXlsxFile = async (file: File) => {
+    setXlsxFile(file);
+    setXlsxPreview(null);
+    setXlsxResult(null);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await axiosApi.post("/export/event/import-preview", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setXlsxPreview(res.data as typeof xlsxPreview);
+    } catch (err: unknown) {
+      const msg = err instanceof Error && "response" in err
+        ? ((err as { response?: { data?: { message?: string } } }).response?.data?.message ?? "Validation failed.")
+        : "Validation failed.";
+      setXlsxPreview({ valid: false, message: msg });
+    }
+  };
+
+  const handleXlsxImport = async () => {
+    if (!xlsxFile) return;
+    setXlsxImporting(true);
+    const fd = new FormData();
+    fd.append("file", xlsxFile);
+    try {
+      const res = await axiosApi.post("/export/event/import", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setXlsxResult(res.data as typeof xlsxResult);
+    } catch (err: unknown) {
+      const msg = err instanceof Error && "response" in err
+        ? ((err as { response?: { data?: { message?: string } } }).response?.data?.message ?? "Import failed.")
+        : "Import failed.";
+      setXlsxResult({ success: false, message: msg, attendanceCreated: 0, attendanceSkipped: 0 });
+    } finally {
+      setXlsxImporting(false);
+    }
+  };
 
   const preview = useMemo(() => parseCsvPreview(previewText), [previewText]);
   const headerValidation = useMemo(
@@ -214,6 +276,10 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
       fileInputRef.current?.click();
       return;
     }
+    if (!isActivePeriodLoading && !hasActiveAcademicPeriod) {
+      setShowNoActivePeriodModal(true);
+      return;
+    }
     if (!headerValidation.valid) {
       setError(headerValidation.message || "CSV is empty.");
       return;
@@ -224,7 +290,16 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
     importMutation.mutate(fileToImport, {
       onSuccess: (data) => setResult(data as StudentCsvImportResult),
       onError: (err) => {
-        setError(getApiErrorMessage(err, "Import failed."));
+        const message = getApiErrorMessage(err, "Import failed.");
+        const isMissingActivePeriod =
+          err.response?.status === 403 &&
+          /active school year|academic period/i.test(message);
+        if (isMissingActivePeriod) {
+          setShowNoActivePeriodModal(true);
+          setError("");
+          return;
+        }
+        setError(message);
       },
       onSettled: () => {
         setSelectedFile(null);
@@ -259,9 +334,12 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
           <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
-            <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
-              Import Students CSV
-            </h1>
+            <div>
+              <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
+                Import Students CSV
+              </h1>
+              <NavbarAcademicPeriod className="mt-1" />
+            </div>
             <div className="flex items-center gap-4">
               <div className="relative">
                 <button
@@ -318,6 +396,11 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
               {preview.headers.length > 0 && !headerValidation.valid && (
                 <p className="text-sm text-black">{headerValidation.message}</p>
               )}
+              {!isActivePeriodLoading && !hasActiveAcademicPeriod ? (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  Student import is disabled until a super admin activates a school year and semester.
+                </p>
+              ) : null}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -375,7 +458,7 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
               </div>
             )}
 
-            {isAdmin && (
+            {canManage && (
               <div className="min-w-0 rounded-xl border border-red-300 bg-red-50/40 p-5 shadow-sm space-y-4">
                 <div>
                   <h3 className="text-sm font-bold text-black">Reset all data</h3>
@@ -530,9 +613,149 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
                 )}
               </div>
             )}
-          </div>
+          {/* ── Excel Import (CSG President only) ───────────────────── */}
+          {isCsg && (
+            <div className="min-w-0 rounded-xl border border-[#07713c]/30 bg-white p-5 shadow-sm space-y-4">
+              <div className="flex items-center gap-2">
+                <svg className="h-5 w-5 text-[#07713c]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.5C16.5 22.15 20 17.25 20 12V6l-8-4z" />
+                  <path d="M9 12l2 2 4-4" />
+                </svg>
+                <h2 className="text-base font-bold text-black">Import Protected Event Excel</h2>
+              </div>
+              <p className="text-xs text-black/60">
+                Upload an event Excel file exported by the system. The file will be automatically validated
+                against the current System Export Password before importing.
+              </p>
+
+              {/* File drop zone */}
+              <div
+                onDragOver={(e) => { e.preventDefault(); setXlsxDragging(true); }}
+                onDragLeave={() => setXlsxDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setXlsxDragging(false);
+                  const f = e.dataTransfer.files?.[0];
+                  if (f) void handleXlsxFile(f);
+                }}
+                onClick={() => xlsxInputRef.current?.click()}
+                className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-5 py-8 text-center cursor-pointer transition-colors ${
+                  xlsxDragging ? "border-[#07713c] bg-green-50" : "border-gray-300 bg-gray-50 hover:border-[#07713c]/60 hover:bg-green-50/40"
+                }`}
+              >
+                <svg className="h-9 w-9 text-[#07713c]/50 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" />
+                </svg>
+                <p className="text-sm font-medium text-black">
+                  {xlsxFile ? xlsxFile.name : "Drop an Excel (.xlsx) file here or click to browse"}
+                </p>
+                <p className="text-xs text-black/50 mt-1">Accepts NMCI-exported event Excel files only</p>
+                <input
+                  ref={xlsxInputRef}
+                  type="file"
+                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void handleXlsxFile(f);
+                    e.target.value = "";
+                  }}
+                />
+              </div>
+
+              {/* Preview result */}
+              {xlsxPreview && (
+                <div className={`rounded-xl border p-4 ${xlsxPreview.valid ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+                  <div className="flex items-start gap-2 mb-2">
+                    {xlsxPreview.valid ? (
+                      <svg className="h-5 w-5 text-green-600 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M20 6L9 17l-5-5" /></svg>
+                    ) : (
+                      <svg className="h-5 w-5 text-red-500 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+                    )}
+                    <p className={`text-sm font-semibold ${xlsxPreview.valid ? "text-green-800" : "text-red-700"}`}>{xlsxPreview.message}</p>
+                  </div>
+                  {xlsxPreview.valid && (
+                    <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-green-900">
+                      {xlsxPreview.eventName && <><span className="font-medium">Event:</span><span>{xlsxPreview.eventName}</span></>}
+                      {xlsxPreview.eventDate && <><span className="font-medium">Date:</span><span>{xlsxPreview.eventDate}</span></>}
+                      {xlsxPreview.studentCount != null && <><span className="font-medium">Students:</span><span>{xlsxPreview.studentCount}</span></>}
+                      {xlsxPreview.paymentCount != null && <><span className="font-medium">Payment records:</span><span>{xlsxPreview.paymentCount}</span></>}
+                      {xlsxPreview.exportedBy && <><span className="font-medium">Exported by:</span><span>{xlsxPreview.exportedBy}</span></>}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Import button */}
+              {xlsxPreview?.valid && !xlsxResult && (
+                <button
+                  type="button"
+                  onClick={() => void handleXlsxImport()}
+                  disabled={xlsxImporting}
+                  className="w-full rounded-lg bg-[#07713c] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#055a2e] disabled:opacity-60"
+                >
+                  {xlsxImporting ? "Importing..." : "Import Event Data"}
+                </button>
+              )}
+
+              {/* Import result */}
+              {xlsxResult && (
+                <div className={`rounded-xl border p-4 ${xlsxResult.success ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+                  <p className={`text-sm font-semibold ${xlsxResult.success ? "text-green-800" : "text-red-700"}`}>{xlsxResult.message}</p>
+                  {xlsxResult.success && (
+                    <p className="mt-1 text-xs text-green-700">
+                      Attendance records created: {xlsxResult.attendanceCreated} · Skipped: {xlsxResult.attendanceSkipped}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => { setXlsxFile(null); setXlsxPreview(null); setXlsxResult(null); }}
+                    className="mt-3 text-xs text-[#07713c] underline hover:text-[#055a2e]"
+                  >
+                    Import another file
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          </div>{/* end mx-auto max-w-7xl */}
         </main>
       </div>
+
+      {showNoActivePeriodModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden">
+            <div className="border-b border-amber-200 bg-amber-50 px-5 py-4">
+              <h3 className="text-lg font-semibold text-amber-950">Cannot import students yet</h3>
+            </div>
+            <div className="space-y-4 p-5 text-sm text-black">
+              <p>
+                There is no <span className="font-semibold">active school year and semester</span> configured for the
+                system right now.
+              </p>
+              <p>
+                Student CSV imports are linked to the active academic period. Before you can import, a super admin must
+                create and activate a school year and semester under <span className="font-semibold">Academic Settings</span>.
+              </p>
+              <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-black/80">
+                After activation, return here and upload your CSV again. Imported enrollments will be tied to that
+                active period.
+              </p>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowNoActivePeriodModal(false)}
+                  className="rounded-lg bg-[#07713c] px-4 py-2 text-sm font-medium text-white hover:bg-[#055a2e]"
+                >
+                  OK, got it
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showReportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">

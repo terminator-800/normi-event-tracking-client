@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import SidebarNavIcon from "./SidebarNavIcon";
+import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
 import UserCircleIcon from "./UserCircleIcon";
@@ -35,7 +36,10 @@ const TABLE_CELL_NOWRAP = "[&_th]:whitespace-nowrap [&_tbody_td]:whitespace-nowr
 export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
   const { role, isGovernor, governorScope } = useGovernorScope();
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
-  const isAdmin = String(role || "").toLowerCase().trim() === "admin";
+  const normalizedRole = String(role || "").toLowerCase().trim();
+  const isAdmin = normalizedRole === "admin";
+  const isSuperAdmin = normalizedRole === "super_admin";
+  const canManage = isAdmin || isSuperAdmin;
   const [showLogout, setShowLogout] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | number | null>(null);
@@ -43,11 +47,11 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
   const [actionError, setActionError] = useState("");
   const [actionSuccess, setActionSuccess] = useState("");
 
-  const { data: users = [], isLoading, refetch } = useUsersList(isAdmin);
+  const { data: users = [], isLoading, refetch } = useUsersList(canManage);
   const updateUserMutation = useUpdateUser();
   const deleteUserMutation = useDeleteUser();
 
-  const navItems = getAppNavItems({ isAdmin });
+  const navItems = getAppNavItems({ isAdmin: canManage, isSuperAdmin });
 
   const sortedUsers = useMemo(
     () => [...users].sort((a, b) => Number(a.id) - Number(b.id)),
@@ -61,11 +65,11 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
   };
 
   useEffect(() => {
-    if (isAdmin) return;
+    if (canManage) return;
     onNavigate?.("events");
-  }, [isAdmin, onNavigate]);
+  }, [canManage, onNavigate]);
 
-  if (!isAdmin) {
+  if (!canManage) {
     return null;
   }
 
@@ -138,9 +142,12 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
           <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
-            <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
-              User Management
-            </h1>
+            <div>
+              <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
+                User Management
+              </h1>
+              <NavbarAcademicPeriod className="mt-1" />
+            </div>
             <div className="relative">
               <button
                 type="button"
@@ -175,12 +182,12 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                 <div>
                   <h2 className="text-lg font-bold text-black">Users</h2>
                   <p className="text-sm text-black/75">
-                    {isAdmin
-                      ? "Manage registered users. Admin can update username/password and remove accounts."
+                    {canManage
+                      ? "Manage registered users. Update username, password, and remove accounts."
                       : "You can view users, but only admin can edit."}
                   </p>
                 </div>
-                {isAdmin && (
+                {canManage && (
                   <button
                     type="button"
                     onClick={() => setCreateOpen(true)}
@@ -191,7 +198,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                 )}
               </div>
               <div className="space-y-1 border-b border-[#07713c]/20 px-4 py-3">
-                <p className="text-xs text-black/75">Role: {roleLabel}</p>
+                <p className="text-xs text-black/75">Role: {isSuperAdmin ? "Super Admin" : roleLabel}</p>
                 {actionError && <p className="text-sm text-black">{actionError}</p>}
                 {actionSuccess && <p className="text-sm text-black">{actionSuccess}</p>}
               </div>

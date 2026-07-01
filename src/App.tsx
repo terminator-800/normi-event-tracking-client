@@ -9,6 +9,14 @@ import ManageEvents from "./components/ManageEvents";
 import Payments from "./components/Payments";
 import ImportPage from "./components/ImportPage";
 import UsersPage from "./components/UsersPage";
+import AcademicSettingsPage from "./components/AcademicSettingsPage";
+import MainDashboard from "./components/MainDashboard";
+import AdminManagementPage from "./components/AdminManagementPage";
+import RolesPermissionsPage from "./components/RolesPermissionsPage";
+import SystemSettingsPage from "./components/SystemSettingsPage";
+import AuditLogsPage from "./components/AuditLogsPage";
+import ReportsAnalyticsPage from "./components/ReportsAnalyticsPage";
+import ExportSecurityPage from "./components/ExportSecurityPage";
 import CreateUserModal from "./components/CreateUserModal";
 import { AUTH_SESSION_QUERY_KEY, useAuthSession, useLogout } from "./hooks/auth";
 import {
@@ -18,6 +26,8 @@ import {
   eventsEventStudentsPath,
   resolveNavRoute,
 } from "./utils/appNav";
+import { getDefaultRouteForRole } from "./utils/authRouting";
+import { getRoleFromSession, isSuperAdminRole, isAdminRole, isCsgPresident } from "./utils/roles";
 import { CURRENT_EVENT_QUERY_KEY } from "./hooks/useGetCurrentEvent";
 import { EVENTS_QUERY_KEY } from "./hooks/useGetEvents";
 import type { AuthSession } from "./types/api";
@@ -39,7 +49,6 @@ function LegacyAttendanceEventStudentsRedirect() {
 function App() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const defaultRoute = DEFAULT_LOGGED_IN_ROUTE;
   const { mutate: logout } = useLogout();
   const { data: session, isLoading: isSessionLoading, refetch: refetchSession } = useAuthSession();
   const [loginPayload, setLoginPayload] = useState<AuthSession | null>(null);
@@ -49,7 +58,10 @@ function App() {
   const effectiveAuth = session ?? loginPayload;
   const decodedUser = effectiveAuth?.user ?? effectiveAuth;
   const normalizedRole = String(decodedUser?.role ?? "").toLowerCase().trim();
-  const isAdminUser = normalizedRole === "admin";
+  const isAdminUser = isAdminRole(normalizedRole);
+  const isSuperAdminUser = isSuperAdminRole(normalizedRole);
+  const isCsgUser = isCsgPresident(normalizedRole);
+  const defaultRoute = DEFAULT_LOGGED_IN_ROUTE;
 
   useEffect(() => {
     if (!isCreateUserOpen) return;
@@ -70,11 +82,13 @@ function App() {
   }, [isCreateUserOpen]);
 
   const handleLoginSuccess = (data: AuthSession | null | undefined, options: LoginSuccessOptions = {}) => {
-    const redirectTo = options.redirectTo ?? defaultRoute;
     setLoginPayload(data ?? { authenticated: true });
     queryClient.invalidateQueries({ queryKey: EVENTS_QUERY_KEY });
     queryClient.invalidateQueries({ queryKey: CURRENT_EVENT_QUERY_KEY });
-    refetchSession().finally(() => {
+    refetchSession().then((result) => {
+      const session = result.data ?? data ?? null;
+      const role = getRoleFromSession(session);
+      const redirectTo = options.redirectTo ?? getDefaultRouteForRole(role);
       navigate(redirectTo, { replace: true });
     });
   };
@@ -115,49 +129,46 @@ function App() {
       <Routes>
       {!isLoggedIn ? (
         <>
-          <Route
-            path="/"
-            element={<Home />}
-          />
+          <Route path="/" element={<Home />} />
           <Route path="/login" element={<LoginDashboard onLoginSuccess={(data) => handleLoginSuccess(data)} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </>
       ) : (
         <>
+          <Route path="/login" element={<Navigate to={defaultRoute} replace />} />
+          <Route path="/" element={<Navigate to={defaultRoute} replace />} />
+
+          {/* Dashboard — accessible to all logged-in desk users */}
           <Route
-            path="/login"
-            element={<Navigate to={defaultRoute} replace />}
+            path={APP_ROUTES.dashboard}
+            element={<MainDashboard {...deskProps} />}
           />
+
+          {/* Academic Settings — Super Admin only */}
           <Route
-            path="/"
-            element={<Navigate to={defaultRoute} replace />}
+            path={APP_ROUTES.academicSettings}
+            element={
+              isSuperAdminUser ? (
+                <AcademicSettingsPage {...deskProps} />
+              ) : (
+                <Navigate to={defaultRoute} replace />
+              )
+            }
           />
-          <Route
-            path="/dashboard"
-            element={<Navigate to={defaultRoute} replace />}
-          />
+
+          {/* Shared operational routes — all roles except require admin for import/users */}
           <Route path={APP_ROUTES.events} element={<Events {...deskProps} />} />
           <Route path={`${APP_ROUTES.events}/:eventId`} element={<Events {...deskProps} />} />
           <Route path={`${APP_ROUTES.events}/:eventId/students`} element={<Events {...deskProps} />} />
           <Route path={APP_ROUTES.students} element={<StudentAttendancePage {...deskProps} />} />
           <Route path={APP_ROUTES.manageEvents} element={<ManageEvents {...deskProps} />} />
           <Route path={APP_ROUTES.payments} element={<Payments {...deskProps} />} />
+
+          {/* Admin + Super Admin only */}
           <Route
-            path="/attendance"
-            element={<Navigate to={APP_ROUTES.events} replace />}
-          />
-          <Route
-            path="/attendance/event/:eventId"
-            element={<LegacyAttendanceEventRedirect />}
-          />
-          <Route
-            path="/attendance/event/:eventId/students"
-            element={<LegacyAttendanceEventStudentsRedirect />}
-          />
-          <Route
-            path="/import"
+            path={APP_ROUTES.import}
             element={
-              isAdminUser ? (
+              isAdminUser || isSuperAdminUser ? (
                 <ImportPage {...deskProps} />
               ) : (
                 <Navigate to={defaultRoute} replace />
@@ -165,15 +176,84 @@ function App() {
             }
           />
           <Route
-            path="/users"
+            path={APP_ROUTES.users}
             element={
-              isAdminUser ? (
+              isAdminUser || isSuperAdminUser ? (
                 <UsersPage {...deskProps} />
               ) : (
                 <Navigate to={defaultRoute} replace />
               )
             }
           />
+
+          {/* CSG President exclusive routes */}
+          <Route
+            path={APP_ROUTES.exportSecurity}
+            element={
+              isCsgUser ? (
+                <ExportSecurityPage {...deskProps} />
+              ) : (
+                <Navigate to={defaultRoute} replace />
+              )
+            }
+          />
+
+          {/* Super Admin exclusive routes */}
+          <Route
+            path={APP_ROUTES.adminManagement}
+            element={
+              isSuperAdminUser ? (
+                <AdminManagementPage {...deskProps} />
+              ) : (
+                <Navigate to={defaultRoute} replace />
+              )
+            }
+          />
+          <Route
+            path={APP_ROUTES.rolesPermissions}
+            element={
+              isSuperAdminUser ? (
+                <RolesPermissionsPage {...deskProps} />
+              ) : (
+                <Navigate to={defaultRoute} replace />
+              )
+            }
+          />
+          <Route
+            path={APP_ROUTES.systemSettings}
+            element={
+              isSuperAdminUser ? (
+                <SystemSettingsPage {...deskProps} />
+              ) : (
+                <Navigate to={defaultRoute} replace />
+              )
+            }
+          />
+          <Route
+            path={APP_ROUTES.auditLogs}
+            element={
+              isSuperAdminUser ? (
+                <AuditLogsPage {...deskProps} />
+              ) : (
+                <Navigate to={defaultRoute} replace />
+              )
+            }
+          />
+          <Route
+            path={APP_ROUTES.reports}
+            element={
+              isSuperAdminUser ? (
+                <ReportsAnalyticsPage {...deskProps} />
+              ) : (
+                <Navigate to={defaultRoute} replace />
+              )
+            }
+          />
+
+          {/* Legacy redirects */}
+          <Route path="/attendance" element={<Navigate to={APP_ROUTES.events} replace />} />
+          <Route path="/attendance/event/:eventId" element={<LegacyAttendanceEventRedirect />} />
+          <Route path="/attendance/event/:eventId/students" element={<LegacyAttendanceEventStudentsRedirect />} />
           <Route path="/time-in-out" element={<Navigate to={defaultRoute} replace />} />
           <Route path="*" element={<Navigate to={defaultRoute} replace />} />
         </>

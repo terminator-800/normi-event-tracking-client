@@ -10,6 +10,8 @@ export type DownloadPdfTableOptions = {
   subtitle?: string;
   head: string[];
   body: (string | number)[][];
+  /** When provided, the PDF is encrypted with this password (jsPDF encryption). */
+  exportPassword?: string | null;
 };
 
 const LOGO_SIZE = 38;
@@ -43,12 +45,17 @@ export async function downloadPdfTable({
   subtitle,
   head,
   body,
+  exportPassword,
 }: DownloadPdfTableOptions): Promise<void> {
   const landscape = head.length > 6;
+  const encryptionOptions = exportPassword
+    ? { userPassword: exportPassword, ownerPassword: exportPassword, userPermissions: ["print"] as ("print" | "modify" | "copy" | "annot-forms")[] }
+    : undefined;
   const doc = new jsPDF({
     orientation: landscape ? "landscape" : "portrait",
     unit: "pt",
     format: "a4",
+    encryption: encryptionOptions,
   });
   const margin = 40;
   const pageWidth = doc.internal.pageSize.getWidth();

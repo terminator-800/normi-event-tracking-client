@@ -32,12 +32,30 @@ export type AuthUser = {
   data?: { role?: string };
 };
 
+export type AcademicPeriodRecord = {
+  id: number;
+  school_year: string;
+  semester: "1st sem" | "2nd sem" | "summer";
+  status: "draft" | "active" | "archived";
+  label?: string | null;
+  starts_on?: string | null;
+  ends_on?: string | null;
+  activated_at?: string | null;
+  activated_by_user_id?: number | null;
+  activated_by_username?: string | null;
+  created_by_user_id?: number | null;
+  created_by_username?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type AuthSession = {
   role?: string;
   username?: string;
   full_name?: string;
   fullName?: string;
   user?: AuthUser;
+  activeAcademicPeriod?: AcademicPeriodRecord | null;
   data?: { role?: string; user?: AuthUser; username?: string; full_name?: string };
   profile?: { role?: string; full_name?: string };
   me?: { role?: string };

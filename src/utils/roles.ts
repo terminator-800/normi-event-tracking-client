@@ -83,6 +83,16 @@ export function isAdminRole(role: unknown): boolean {
   return normalizeRoleKey(role) === "admin";
 }
 
+/** Super administrator — configures active school year and semester. */
+export function isSuperAdminRole(role: unknown): boolean {
+  return normalizeRoleKey(role) === "super_admin";
+}
+
+/** Desk users who operate within the active academic period. */
+export function isOperationalDeskRole(role: unknown): boolean {
+  return isAdminRole(role) || isCsgPresident(role) || isDepartmentGovernorRole(role);
+}
+
 /**
  * True when the role should load all departments’ events (admins only on the API).
  * CSG presidents see only events they created, like governors — not institution-wide listings.
@@ -102,6 +112,7 @@ export function getDashboardRoleLabel(
   governorScope: { label?: string } | null | undefined,
   role: unknown,
 ): string {
+  if (isSuperAdminRole(role)) return "Super Admin";
   if (isGovernor && governorScope?.label) return governorScope.label;
   if (isCsgPresident(role)) return "CSG President";
   return "Admin";

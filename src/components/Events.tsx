@@ -4,6 +4,7 @@ import { Pie } from "react-chartjs-2";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
+import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarNavIcon from "./SidebarNavIcon";
 import SidebarBrand from "./SidebarBrand";
 import UserCircleIcon from "./UserCircleIcon";
@@ -22,6 +23,9 @@ import { formatDurationForEventsListWithSessionHint } from "../utils/eventDurati
 import { formatGraceDurationLabel } from "../utils/eventTimeOptions";
 import { getAudienceScopeLabel } from "../utils/eventAudienceLabel";
 import { downloadPdfTable } from "../utils/downloadPdfTable";
+import { fetchExportKey } from "../hooks/useExportSecurity";
+import { isCsgPresident } from "../utils/roles";
+import axiosApi from "../api/axiosInstance";
 import type {
   AttendanceEvent,
   AttendanceStudent,
@@ -238,8 +242,8 @@ function attendanceEventListAudienceLabel(ev: AttendanceEvent | null | undefined
   });
 }
 
-function downloadTextFile(filename: string, text: string, mime = "text/csv;charset=utf-8"): void {
-  const blob = new Blob([text], { type: mime });
+/** Utility to trigger a blob file download in the browser. */
+function triggerBlobDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -247,6 +251,7 @@ function downloadTextFile(filename: string, text: string, mime = "text/csv;chars
   a.click();
   URL.revokeObjectURL(url);
 }
+void triggerBlobDownload; // suppress unused lint warning — kept as shared utility
 
 type EventsPageProps = DeskPageProps;
 
@@ -256,7 +261,10 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
   const { eventId } = useParams();
   const { role, isGovernor, governorScope } = useGovernorScope();
   void getDashboardRoleLabel(isGovernor, governorScope, role);
-  const isAdmin = String(role || "").toLowerCase().trim() === "admin";
+  const normalizedRole = String(role || "").toLowerCase().trim();
+  const isAdmin = normalizedRole === "admin";
+  const isSuperAdmin = normalizedRole === "super_admin";
+  const isCsg = isCsgPresident(normalizedRole);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -276,6 +284,48 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
   const events: AttendanceEvent[] =
     (pageData as { events?: AttendanceEvent[] } | undefined)?.events ?? [];
   const [exportOpen, setExportOpen] = useState(false);
+  // ── Import Event state (CSG President only) ────────────────────────────────
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importStep, setImportStep] = useState<
+    "upload" | "previewing" | "preview" | "importing" | "result"
+  >("upload");
+  const [importPreviewData, setImportPreviewData] = useState<{
+    valid: boolean;
+    message: string;
+    eventName?: string;
+    eventDate?: string;
+    department?: string;
+    studentCount?: number;
+    attendanceCount?: number;
+    paymentCount?: number;
+    exportedBy?: string;
+    exportDate?: string;
+    fingerprintMatch?: boolean;
+    isDuplicate?: boolean;
+    duplicateEventId?: number | null;
+    existingEventName?: string | null;
+  } | null>(null);
+  const [importResultData, setImportResultData] = useState<{
+    success: boolean;
+    message: string;
+    skipped?: boolean;
+    eventId?: number | null;
+    eventName?: string | null;
+    department?: string | null;
+    eventCreated?: boolean;
+    studentsImported?: number;
+    studentsFound?: number;
+    attendanceCreated?: number;
+    attendanceSkipped?: number;
+    finesCreated?: number;
+    paymentsCreated?: number;
+    failedRecords?: number;
+    errors?: string[];
+  } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importDragging, setImportDragging] = useState(false);
+  // ── End import state ───────────────────────────────────────────────────────
   const [eventListPage, setEventListPage] = useState(1);
   const [eventListPageSize, setEventListPageSize] = useState(DEFAULT_EVENT_LIST_PAGE_SIZE);
   const [studentListSearch, setStudentListSearch] = useState("");
@@ -737,7 +787,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
     }
   }, [exportAllEventId, exportCompletedEventOptions]);
 
-  const navItems = getAppNavItems({ isAdmin });
+  const navItems = getAppNavItems({ isAdmin: isAdmin || isSuperAdmin, isSuperAdmin, isCsgPresident: isCsg });
 
 
   const handleNav = (itemId: string) => {
@@ -757,66 +807,83 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
     navigate(APP_ROUTES.events);
   };
 
-  const exportCsvAll = async () => {
-    const selectedEvents = events.filter((ev) => {
-      if (exportAllEventId !== "all" && String(ev.id) !== String(exportAllEventId)) return false;
-      if (exportAllEventStatus !== "all" && ev.status !== exportAllEventStatus) return false;
-      return true;
-    });
-    const detailedEvents: AttendanceEvent[] = await Promise.all(
-      selectedEvents.map(async (ev): Promise<AttendanceEvent> => {
-        const id = ev.id;
-        if (id == null) return ev;
-        try {
-          const full = await fetchAttendancePageEventDetail(id);
-          return (full as AttendanceEvent | null) || ev;
-        } catch {
-          return ev;
-        }
-      }),
-    );
-    const header = [
-      "Event",
-      "Date",
-      "Event Status",
-      "Student ID",
-      "Student Name",
-      "Department",
-      "Course",
-      "Major",
-      "Year Level",
-      "Attendance",
-      "Fine PHP",
-    ];
-    const rows = [];
-    for (const ev of detailedEvents) {
-      for (const s of ev.students || []) {
-        const course = getCourseWithMajorCode(s);
-        const college = getStudentDepartmentName(s);
-        if (exportAllCollege !== "all" && college !== exportAllCollege) continue;
-        if (exportAllCourse !== "all" && course !== exportAllCourse) continue;
-        const attendance = ev.status === "upcoming" ? "no_record" : s.status === "attended" ? "attended" : "absent";
-        const yl = getYearLevel(s);
-        rows.push([
-          `"${String(ev.name || "").replace(/"/g, '""')}"`,
-          ev.date,
-          ev.status,
-          `"${String(s.id || "").replace(/"/g, '""')}"`,
-          `"${String(s.name || "").replace(/"/g, '""')}"`,
-          `"${String(college).replace(/"/g, '""')}"`,
-          `"${String(course).replace(/"/g, '""')}"`,
-          `"${String(getMajor(s) || "—").replace(/"/g, '""')}"`,
-          yl != null ? yl : "—",
-          attendance === "no_record" ? "No record" : attendance,
-          Number(s.finePhp) || 0,
-        ]);
-      }
+  const downloadExcelAll = async () => {
+    try {
+      const response = await axiosApi.get("/export/events/excel", { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([response.data as BlobPart]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `all-events-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Failed to download Excel export. Please try again.");
     }
-    downloadTextFile(
-      `attendance-report-students-${new Date().toISOString().slice(0, 10)}.csv`,
-      [header.join(","), ...rows.map((r) => r.join(","))].join("\n"),
-    );
   };
+
+  // ── Import Event handlers (CSG President only) ──────────────────────────────
+  const resetImportModal = () => {
+    setImportFile(null);
+    setImportStep("upload");
+    setImportPreviewData(null);
+    setImportResultData(null);
+    setImportError(null);
+    setImportDragging(false);
+  };
+
+  const handleImportFileSelect = async (file: File) => {
+    setImportFile(file);
+    setImportStep("previewing");
+    setImportError(null);
+    setImportPreviewData(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await axiosApi.post("/export/event/import-preview", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setImportPreviewData(res.data as typeof importPreviewData);
+      setImportStep("preview");
+    } catch (err: unknown) {
+      const data = (err as { response?: { data?: unknown } })?.response?.data;
+      if (data && typeof data === "object") {
+        setImportPreviewData(data as typeof importPreviewData);
+      }
+      setImportError(
+        (data as { message?: string })?.message ??
+          "Failed to validate the file. Please try again.",
+      );
+      setImportStep("preview");
+    }
+  };
+
+  const handleImportConfirm = async (
+    action: "skip" | "replace" | "copy",
+  ) => {
+    if (!importFile) return;
+    setImportStep("importing");
+
+    const formData = new FormData();
+    formData.append("file", importFile);
+    formData.append("action", action);
+    try {
+      const res = await axiosApi.post("/export/event/import-full", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setImportResultData(res.data as typeof importResultData);
+      setImportStep("result");
+    } catch (err: unknown) {
+      const data = (err as { response?: { data?: unknown } })?.response?.data;
+      setImportResultData(
+        data && typeof data === "object"
+          ? (data as typeof importResultData)
+          : { success: false, message: "Import failed. Please try again." },
+      );
+      setImportStep("result");
+    }
+  };
+  // ── End import handlers ──────────────────────────────────────────────────────
 
   const buildEventExportRows = (
     ev: AttendanceEvent,
@@ -839,13 +906,24 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
     });
     return { header, body };
   };
+  void buildEventExportRows; // suppress unused — kept for future CSV export use
 
-  const exportCsvEvent = (ev: AttendanceEvent, students: AttendanceStudent[] | null = null) => {
-    const { header, body } = buildEventExportRows(ev, students);
-    const csvBody = body.map((row: (string | number)[]) =>
-      row.map((cell: string | number) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
-    );
-    downloadTextFile(`attendance-${ev.id}-${ev.date}.csv`, [header.join(","), ...csvBody].join("\n"));
+  const downloadExcelEvent = async (ev: AttendanceEvent) => {
+    if (!ev.id) return;
+    try {
+      const response = await axiosApi.get(`/export/event/${ev.id}/excel`, { responseType: "blob" });
+      const disposition = String(response.headers?.["content-disposition"] ?? "");
+      const filenameMatch = disposition.match(/filename="?([^";\n]+)"?/);
+      const filename = filenameMatch?.[1]?.trim() || `event-${ev.id}-${ev.date ?? "export"}.xlsx`;
+      const url = URL.createObjectURL(new Blob([response.data as BlobPart]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Failed to download Excel export. Please try again.");
+    }
   };
 
   const buildEventExportRowsForPdf = (
@@ -870,12 +948,14 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
 
   const exportPdfEvent = async (ev: AttendanceEvent, students: AttendanceStudent[] | null = null) => {
     const { header, body } = buildEventExportRowsForPdf(ev, students);
+    const exportPassword = await fetchExportKey();
     await downloadPdfTable({
       filename: `attendance-${ev.id}-${ev.date}.pdf`,
       title: "Attendance Report",
       subtitle: `${ev.name || "Event"} · ${formatEventDateForDisplay(ev.date)} · ${ev.status || ""}`,
       head: header,
       body,
+      exportPassword,
     });
   };
 
@@ -930,12 +1010,14 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
         ]);
       }
     }
+    const exportPassword = await fetchExportKey();
     await downloadPdfTable({
       filename: `attendance-report-students-${new Date().toISOString().slice(0, 10)}.pdf`,
       title: "Attendance Report — All Events",
       subtitle: `Generated ${new Date().toLocaleString("en-PH")} · ${body.length} student record(s)`,
       head: header,
       body,
+      exportPassword,
     });
   };
 
@@ -975,8 +1057,21 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
               <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">
                 Events
               </h1>
+              <NavbarAcademicPeriod className="mt-1" />
             </div>
             <div className="flex items-center gap-3">
+              {isCsg && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetImportModal();
+                    setImportOpen(true);
+                  }}
+                  className="rounded-lg border border-[#07713c] bg-white px-3 py-2 text-sm font-medium text-[#07713c] hover:bg-[#07713c]/10"
+                >
+                  Import Event
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setExportOpen(true)}
@@ -1113,7 +1208,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
                   <div className="mt-4 flex flex-wrap gap-2 border-t border-[#07713c]/20 pt-4">
                     <button
                       type="button"
-                      onClick={() => exportCsvEvent(detailEvent)}
+                      onClick={() => downloadExcelEvent(detailEvent)}
                       className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
                     >
                       Export Excel (CSV) — this event
@@ -1472,7 +1567,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => exportCsvEvent(detailEvent)}
+                      onClick={() => downloadExcelEvent(detailEvent)}
                       className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
                     >
                       Export Excel (CSV) — this event
@@ -1823,7 +1918,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
               </button>
               <button
                 type="button"
-                onClick={() => exportCsvEvent(detailEvent!, isStudentListPath ? filteredStudentList : detailEvent!.students)}
+                onClick={() => downloadExcelEvent(detailEvent!)}
                 className="rounded-lg border border-[#07713c]/40 bg-white px-3 py-2 text-sm font-medium hover:bg-[#07713c]/10"
               >
                 Export Excel (CSV) — this event
@@ -1846,6 +1941,302 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
       )}
 
       {/* Export panel */}
+      {/* ── Import Event Modal (CSG President only) ─────────────────────── */}
+      {importOpen && isCsg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            {/* Header */}
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-black">Import Event</h2>
+                <p className="mt-0.5 text-xs text-black/60">
+                  Import a system-exported .xlsx event file
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setImportOpen(false)}
+                className="rounded-lg p-1.5 text-black/50 hover:bg-[#07713c]/10 hover:text-black"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Step: upload */}
+            {importStep === "upload" && (
+              <div
+                onDragOver={(e) => { e.preventDefault(); setImportDragging(true); }}
+                onDragLeave={() => setImportDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setImportDragging(false);
+                  const f = e.dataTransfer.files[0];
+                  if (f) void handleImportFileSelect(f);
+                }}
+                className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-12 text-center transition-colors ${
+                  importDragging
+                    ? "border-[#07713c] bg-[#07713c]/5"
+                    : "border-[#07713c]/30 bg-[#07713c]/[0.02]"
+                }`}
+              >
+                <div className="text-4xl">📂</div>
+                <p className="text-sm font-medium text-black">
+                  Drag &amp; drop a <span className="font-bold">.xlsx</span> event file here
+                </p>
+                <p className="text-xs text-black/50">or</p>
+                <label className="cursor-pointer rounded-lg border border-[#07713c] bg-white px-4 py-2 text-sm font-medium text-[#07713c] hover:bg-[#07713c]/10">
+                  Browse file
+                  <input
+                    type="file"
+                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void handleImportFileSelect(f);
+                    }}
+                  />
+                </label>
+                <p className="mt-1 text-xs text-black/40">
+                  Only system-exported .xlsx files are accepted
+                </p>
+              </div>
+            )}
+
+            {/* Step: previewing */}
+            {importStep === "previewing" && (
+              <div className="flex flex-col items-center gap-4 py-10">
+                <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#07713c]/20 border-t-[#07713c]" />
+                <p className="text-sm font-medium text-black">Validating file…</p>
+                {importFile && (
+                  <p className="text-xs text-black/50">{importFile.name}</p>
+                )}
+              </div>
+            )}
+
+            {/* Step: preview */}
+            {importStep === "preview" && (
+              <div className="space-y-4">
+                {/* Validation badge */}
+                {importPreviewData?.valid ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+                    <span className="text-base">✅</span>
+                    <span className="text-sm font-medium text-black">
+                      File validated successfully
+                    </span>
+                    {importPreviewData.fingerprintMatch && (
+                      <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                        Password verified
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+                    <p className="text-sm font-semibold text-red-800">
+                      ❌ Validation Failed
+                    </p>
+                    <p className="mt-1 text-xs text-red-700">
+                      {importError ?? importPreviewData?.message ?? "Unknown error"}
+                    </p>
+                  </div>
+                )}
+
+                {/* Duplicate warning */}
+                {importPreviewData?.valid && importPreviewData.isDuplicate && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                    <p className="text-sm font-semibold text-amber-800">
+                      ⚠️ Duplicate Event Detected
+                    </p>
+                    <p className="mt-1 text-xs text-amber-700">
+                      An event named &ldquo;<strong>{importPreviewData.existingEventName}</strong>&rdquo; already exists
+                      for this date. Choose how to proceed:
+                    </p>
+                  </div>
+                )}
+
+                {/* Event preview info */}
+                {importPreviewData?.valid && (
+                  <div className="rounded-xl border border-[#07713c]/20 bg-[#07713c]/[0.03] p-4 text-sm">
+                    <h3 className="mb-3 font-semibold text-black">
+                      {importPreviewData.eventName ?? "Event Details"}
+                    </h3>
+                    <div className="grid grid-cols-2 gap-y-2 text-xs">
+                      {importPreviewData.eventDate && (
+                        <>
+                          <span className="text-black/60">Date</span>
+                          <span className="font-medium text-black">{importPreviewData.eventDate}</span>
+                        </>
+                      )}
+                      {importPreviewData.department && (
+                        <>
+                          <span className="text-black/60">Department</span>
+                          <span className="font-medium text-black">{importPreviewData.department}</span>
+                        </>
+                      )}
+                      <span className="text-black/60">Total Students</span>
+                      <span className="font-medium text-black">{importPreviewData.studentCount ?? 0}</span>
+                      <span className="text-black/60">Attended</span>
+                      <span className="font-medium text-black">{importPreviewData.attendanceCount ?? 0}</span>
+                      <span className="text-black/60">Payment Records</span>
+                      <span className="font-medium text-black">{importPreviewData.paymentCount ?? 0}</span>
+                      {importPreviewData.exportedBy && (
+                        <>
+                          <span className="text-black/60">Exported By</span>
+                          <span className="font-medium text-black">{importPreviewData.exportedBy}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                {importPreviewData?.valid ? (
+                  importPreviewData.isDuplicate ? (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-black">Choose an action:</p>
+                      <button
+                        type="button"
+                        onClick={() => void handleImportConfirm("copy")}
+                        className="w-full rounded-lg border border-[#07713c] bg-[#07713c] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#055a2e]"
+                      >
+                        Create a New Copy
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleImportConfirm("replace")}
+                        className="w-full rounded-lg border border-amber-500 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+                      >
+                        Replace Existing Event
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleImportConfirm("skip")}
+                        className="w-full rounded-lg border border-[#07713c]/30 px-4 py-2.5 text-sm font-medium text-black hover:bg-[#07713c]/10"
+                      >
+                        Skip Import
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handleImportConfirm("copy")}
+                      className="w-full rounded-lg border border-[#07713c] bg-[#07713c] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#055a2e]"
+                    >
+                      Import Event Data
+                    </button>
+                  )
+                ) : (
+                  <button
+                    type="button"
+                    onClick={resetImportModal}
+                    className="w-full rounded-lg border border-[#07713c]/30 px-4 py-2.5 text-sm font-medium text-black hover:bg-[#07713c]/10"
+                  >
+                    Try Another File
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Step: importing */}
+            {importStep === "importing" && (
+              <div className="flex flex-col items-center gap-4 py-10">
+                <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#07713c]/20 border-t-[#07713c]" />
+                <p className="text-sm font-medium text-black">Importing event data…</p>
+                <p className="text-xs text-black/50">
+                  Creating event, students, attendance, and payment records
+                </p>
+              </div>
+            )}
+
+            {/* Step: result */}
+            {importStep === "result" && importResultData && (
+              <div className="space-y-4">
+                {importResultData.success ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+                    <span className="text-base">✅</span>
+                    <span className="text-sm font-medium text-black">
+                      {importResultData.skipped
+                        ? "Import skipped — event already exists."
+                        : "Event imported successfully!"}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+                    <p className="text-sm font-semibold text-red-800">❌ Import Failed</p>
+                    <p className="mt-1 text-xs text-red-700">
+                      {importResultData.message}
+                    </p>
+                  </div>
+                )}
+
+                {importResultData.success && !importResultData.skipped && (
+                  <div className="rounded-xl border border-[#07713c]/20 bg-[#07713c]/[0.03] p-4 text-sm">
+                    <h3 className="mb-3 font-semibold text-black">Import Summary</h3>
+                    <div className="grid grid-cols-2 gap-y-2 text-xs">
+                      {importResultData.eventName && (
+                        <>
+                          <span className="text-black/60">Event Name</span>
+                          <span className="font-medium text-black">{importResultData.eventName}</span>
+                        </>
+                      )}
+                      {importResultData.department && (
+                        <>
+                          <span className="text-black/60">Department</span>
+                          <span className="font-medium text-black">{importResultData.department}</span>
+                        </>
+                      )}
+                      <span className="text-black/60">New Students Created</span>
+                      <span className="font-medium text-black">{importResultData.studentsImported ?? 0}</span>
+                      <span className="text-black/60">Existing Students Found</span>
+                      <span className="font-medium text-black">{importResultData.studentsFound ?? 0}</span>
+                      <span className="text-black/60">Attendance Records</span>
+                      <span className="font-medium text-black">{importResultData.attendanceCreated ?? 0}</span>
+                      <span className="text-black/60">Fine Records</span>
+                      <span className="font-medium text-black">{importResultData.finesCreated ?? 0}</span>
+                      <span className="text-black/60">Payment Records</span>
+                      <span className="font-medium text-black">{importResultData.paymentsCreated ?? 0}</span>
+                      {(importResultData.failedRecords ?? 0) > 0 && (
+                        <>
+                          <span className="text-red-600">Failed Records</span>
+                          <span className="font-medium text-red-700">{importResultData.failedRecords}</span>
+                        </>
+                      )}
+                    </div>
+                    {importResultData.errors && importResultData.errors.length > 0 && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                        <p className="mb-1 text-xs font-semibold text-amber-800">Warnings</p>
+                        <ul className="space-y-0.5 text-xs text-amber-700">
+                          {importResultData.errors.map((e, i) => (
+                            <li key={i}>• {e}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={resetImportModal}
+                    className="flex-1 rounded-lg border border-[#07713c]/30 px-4 py-2.5 text-sm font-medium text-black hover:bg-[#07713c]/10"
+                  >
+                    Import Another File
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setImportOpen(false)}
+                    className="flex-1 rounded-lg border border-[#07713c] bg-[#07713c] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#055a2e]"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {/* ── End Import Event Modal ──────────────────────────────────────────── */}
+
       {exportOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className={`w-full max-w-md rounded-xl bg-white p-5 shadow-xl ${ATTENDANCE_TEXT}`}>
@@ -1996,12 +2387,12 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
               <button
                 type="button"
                 onClick={() => {
-                  exportCsvAll();
+                  void downloadExcelAll();
                   setExportOpen(false);
                 }}
                 className="w-full rounded-lg border border-[#07713c] bg-[#07713c]/10 px-4 py-2.5 text-sm font-medium text-black hover:bg-[#07713c]/15"
               >
-                Download CSV — all events (students)
+                Download Excel (.xlsx) — all events
               </button>
               <button
                 type="button"
@@ -2018,7 +2409,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
                 disabled={!detailEvent}
                 onClick={() => {
                   if (!detailEvent) return;
-                  exportCsvEvent(detailEvent, exportFilteredEventStudents);
+                  void downloadExcelEvent(detailEvent);
                   setExportOpen(false);
                 }}
                 className={`w-full rounded-lg border px-4 py-2.5 text-sm font-medium ${
@@ -2027,7 +2418,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
                     : "border-[#07713c]/20 text-black/50"
                 }`}
               >
-                Download CSV — current event (filtered students)
+                Download Excel (.xlsx) — current event
               </button>
               <button
                 type="button"

@@ -1,5 +1,4 @@
-/** Sidebar visibility — route and components stay; set true to show Dashboard again. */
-export const SHOW_DASHBOARD_IN_NAV = false;
+export const SHOW_DASHBOARD_IN_NAV = true;
 
 export const APP_ROUTES = {
   events: "/events",
@@ -8,12 +7,19 @@ export const APP_ROUTES = {
   manageEvents: "/manage-events",
   import: "/import",
   users: "/users",
+  academicSettings: "/academic-settings",
   dashboard: "/dashboard",
+  // CSG President exclusive
+  exportSecurity: "/export-security",
+  // Super Admin exclusive
+  adminManagement: "/admin-management",
+  rolesPermissions: "/roles-permissions",
+  systemSettings: "/system-settings",
+  auditLogs: "/audit-logs",
+  reports: "/reports",
 } as const;
 
-export const DEFAULT_LOGGED_IN_ROUTE = SHOW_DASHBOARD_IN_NAV
-  ? APP_ROUTES.dashboard
-  : APP_ROUTES.events;
+export const DEFAULT_LOGGED_IN_ROUTE = APP_ROUTES.dashboard;
 
 export type AppNavId =
   | "dashboard"
@@ -22,7 +28,16 @@ export type AppNavId =
   | "payment"
   | "manage_events"
   | "import"
-  | "users";
+  | "users"
+  | "academic_settings"
+  // CSG President exclusive
+  | "export_security"
+  // Super Admin exclusive
+  | "admin_management"
+  | "roles_permissions"
+  | "system_settings"
+  | "audit_logs"
+  | "reports";
 
 export type AppNavItem = { id: AppNavId; label: string };
 
@@ -45,6 +60,15 @@ export function resolveNavRoute(navId: string): string | null {
     manage_events: APP_ROUTES.manageEvents,
     import: APP_ROUTES.import,
     users: APP_ROUTES.users,
+    academic_settings: APP_ROUTES.academicSettings,
+    // CSG President exclusive
+    export_security: APP_ROUTES.exportSecurity,
+    // Super Admin exclusive
+    admin_management: APP_ROUTES.adminManagement,
+    roles_permissions: APP_ROUTES.rolesPermissions,
+    system_settings: APP_ROUTES.systemSettings,
+    audit_logs: APP_ROUTES.auditLogs,
+    reports: APP_ROUTES.reports,
     // legacy nav ids (pre-rename)
     attendance: APP_ROUTES.events,
     attendance_students: APP_ROUTES.students,
@@ -52,13 +76,46 @@ export function resolveNavRoute(navId: string): string | null {
   return routes[id] ?? null;
 }
 
-export function getAppNavItems({ isAdmin = false }: { isAdmin?: boolean } = {}): AppNavItem[] {
-  return [
-    ...(SHOW_DASHBOARD_IN_NAV ? [{ id: "dashboard" as const, label: "Dashboard" }] : []),
-    { id: "events", label: "Events" },
-    { id: "students", label: "Students" },
-    { id: "payment", label: "Payments" },
-    { id: "manage_events", label: "Manage Event" },
-    ...(isAdmin ? [{ id: "import" as const, label: "Import" }, { id: "users" as const, label: "Users" }] : []),
-  ];
+/** Shared nav items visible to both Admin and Super Admin. */
+const SHARED_NAV_ITEMS: AppNavItem[] = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "events", label: "Events" },
+  { id: "students", label: "Students" },
+  { id: "payment", label: "Payments" },
+  { id: "manage_events", label: "Manage Events" },
+  { id: "import", label: "Import" },
+  { id: "users", label: "Users" },
+];
+
+/** Additional nav items visible only to CSG President. */
+const CSG_PRESIDENT_ONLY_NAV_ITEMS: AppNavItem[] = [
+  { id: "export_security", label: "Export Security" },
+];
+
+/** Additional nav items visible only to Super Admin. */
+const SUPER_ADMIN_ONLY_NAV_ITEMS: AppNavItem[] = [
+  { id: "admin_management", label: "Admin Management" },
+  { id: "roles_permissions", label: "Roles & Permissions" },
+  { id: "system_settings", label: "System Settings" },
+  { id: "audit_logs", label: "Audit Logs" },
+  { id: "reports", label: "Reports & Analytics" },
+];
+
+export function getAppNavItems({
+  isAdmin = false,
+  isSuperAdmin = false,
+  isCsgPresident = false,
+}: { isAdmin?: boolean; isSuperAdmin?: boolean; isCsgPresident?: boolean } = {}): AppNavItem[] {
+  if (isSuperAdmin) {
+    return [...SHARED_NAV_ITEMS, ...SUPER_ADMIN_ONLY_NAV_ITEMS];
+  }
+  if (isAdmin) {
+    return SHARED_NAV_ITEMS;
+  }
+  // Governor / CSG President — shared items minus Import and Users
+  const base = SHARED_NAV_ITEMS.filter((item) => item.id !== "import" && item.id !== "users");
+  if (isCsgPresident) {
+    return [...base, ...CSG_PRESIDENT_ONLY_NAV_ITEMS];
+  }
+  return base;
 }
