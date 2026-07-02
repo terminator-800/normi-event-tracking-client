@@ -1,3 +1,3 @@
-import MainDashboard from "./MainDashboard";
+import DashboardContent from "./layout/DashboardContent";
 
-export default MainDashboard;
+export default DashboardContent;

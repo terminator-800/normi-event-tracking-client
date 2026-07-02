@@ -10,7 +10,7 @@ import Payments from "./components/Payments";
 import ImportPage from "./components/ImportPage";
 import UsersPage from "./components/UsersPage";
 import AcademicSettingsPage from "./components/AcademicSettingsPage";
-import MainDashboard from "./components/MainDashboard";
+import DashboardContent from "./components/layout/DashboardContent";
 import AdminManagementPage from "./components/AdminManagementPage";
 import RolesPermissionsPage from "./components/RolesPermissionsPage";
 import SystemSettingsPage from "./components/SystemSettingsPage";
@@ -141,7 +141,7 @@ function App() {
           {/* Dashboard — accessible to all logged-in desk users */}
           <Route
             path={APP_ROUTES.dashboard}
-            element={<MainDashboard {...deskProps} />}
+            element={<DashboardContent {...deskProps} />}
           />
 
           {/* Academic Settings — Super Admin only */}
