@@ -5,6 +5,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
 import { NavbarAcademicPeriod } from "./Navbar";
+import ExportReportsButton from "./ExportReports";
 import UserCircleIcon from "./UserCircleIcon";
 import {
   APP_ROUTES,
@@ -281,7 +282,6 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
   });
   const events: AttendanceEvent[] =
     (pageData as { events?: AttendanceEvent[] } | undefined)?.events ?? [];
-  const [exportOpen, setExportOpen] = useState(false);
   // ── Import Event state (CSG President only) ────────────────────────────────
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -332,22 +332,22 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
   const [studentListMajor, setStudentListMajor] = useState("all");
   const [studentListYearLevel, setStudentListYearLevel] = useState("all");
   const [studentListAttendance, setStudentListAttendance] = useState("all");
-  const [exportEventSearch, setExportEventSearch] = useState("");
-  const [exportEventCollege, setExportEventCollege] = useState("all");
+  const [exportEventSearch] = useState("");
+  const [exportEventCollege] = useState("all");
   const [exportEventCourse, setExportEventCourse] = useState("all");
   const [exportEventMajor, setExportEventMajor] = useState("all");
   const [exportEventYearLevel, setExportEventYearLevel] = useState("all");
-  const [exportEventAttendance, setExportEventAttendance] = useState("all");
+  const [exportEventAttendance] = useState("all");
   const [exportAllEventId, setExportAllEventId] = useState("all");
-  const [exportAllEventStatus, setExportAllEventStatus] = useState("all");
-  const [exportAllCollege, setExportAllCollege] = useState("all");
+  const [exportAllEventStatus] = useState("all");
+  const [exportAllCollege] = useState("all");
   const [exportAllCourse, setExportAllCourse] = useState("all");
   const [studentListPageSize, setStudentListPageSize] = useState(10);
   const [studentListPage, setStudentListPage] = useState(1);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const isStudentListPath = Boolean(detailEventId) && location.pathname.endsWith("/students");
   const exportEventDetailId = exportAllEventId === "all" ? null : exportAllEventId;
-  const { data: exportDetailFromApi } = useAttendancePageEventDetail(exportEventDetailId ?? "", {
+  useAttendancePageEventDetail(exportEventDetailId ?? "", {
     enabled: Boolean(exportEventDetailId),
   });
 
@@ -681,25 +681,6 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
   }, [studentListTotalPages]);
 
   useEffect(() => {
-    if (!exportOpen || !detailEvent) return;
-    setExportEventSearch(studentListSearch);
-    setExportEventCollege(studentListCollege);
-    setExportEventCourse(studentListCourse);
-    setExportEventMajor(studentListMajor);
-    setExportEventYearLevel(studentListYearLevel);
-    setExportEventAttendance(studentListAttendance);
-  }, [
-    exportOpen,
-    detailEvent,
-    studentListSearch,
-    studentListCollege,
-    studentListCourse,
-    studentListMajor,
-    studentListYearLevel,
-    studentListAttendance,
-  ]);
-
-  useEffect(() => {
     if (exportEventYearLevel === "all") return;
     if (!studentListYearLevelOptions.includes(Number(exportEventYearLevel))) {
       setExportEventYearLevel("all");
@@ -720,17 +701,6 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
     }
   }, [exportEventCourse, exportEventCourses]);
 
-  const exportAllCollegeOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const ev of events) {
-      for (const s of ev.students || []) {
-        const dept = getStudentDepartmentName(s);
-      if (dept && dept !== "Unassigned") set.add(dept);
-      }
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [events]);
-
   const exportAllCourseOptions = useMemo(() => {
     const set = new Set<string>();
     for (const ev of events) {
@@ -748,27 +718,6 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
     () => events.filter((ev) => ev.status === "completed"),
     [events],
   );
-
-  const exportAllFilteredRows = useMemo(() => {
-    const rows = [];
-    for (const ev of events) {
-      if (exportAllEventId !== "all" && String(ev.id) !== String(exportAllEventId)) continue;
-      if (exportAllEventStatus !== "all" && ev.status !== exportAllEventStatus) continue;
-      const scopedStudents =
-        exportEventDetailId && String(ev.id) === String(exportEventDetailId)
-          ? (exportDetailFromApi as AttendanceEvent | undefined)?.students || ev.students || []
-          : ev.students || [];
-      for (const s of scopedStudents) {
-        const course = getCourseWithMajorCode(s);
-        const college = getStudentDepartmentName(s);
-        if (exportAllCollege !== "all" && college !== exportAllCollege) continue;
-        if (exportAllCourse !== "all" && course !== exportAllCourse) continue;
-        const attendance = ev.status === "upcoming" ? "no_record" : s.status === "attended" ? "attended" : "absent";
-        rows.push({ ev, s, course, college, attendance });
-      }
-    }
-    return rows;
-  }, [events, exportAllEventId, exportAllEventStatus, exportAllCollege, exportAllCourse, exportEventDetailId, exportDetailFromApi]);
 
   useEffect(() => {
     if (exportAllCourse === "all") return;
@@ -1052,13 +1001,44 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
                   Import Event
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => setExportOpen(true)}
-                className="rounded-lg border border-[#e6a100] bg-[#ffb300] px-3 py-2 text-sm font-medium text-black hover:bg-[#e6a100]"
-              >
-                Export / Reports
-              </button>
+              <ExportReportsButton
+                title="Export / reports"
+                description="Choose the export format for the current view."
+                actions={[
+                  {
+                    label: "Download Excel (.xlsx) — all events",
+                    description: "Export all matching student records to Excel.",
+                    onClick: () => {
+                      void downloadExcelAll();
+                    },
+                  },
+                  {
+                    label: "Download PDF — all events (students)",
+                    description: "Export all matching student records to PDF.",
+                    onClick: () => {
+                      exportPdfAll();
+                    },
+                  },
+                  {
+                    label: "Download Excel (.xlsx) — current event",
+                    description: "Export the selected event’s filtered student list to Excel.",
+                    disabled: !detailEvent,
+                    onClick: () => {
+                      if (!detailEvent) return;
+                      void downloadExcelEvent(detailEvent);
+                    },
+                  },
+                  {
+                    label: "Download PDF — current event (filtered students)",
+                    description: "Export the selected event’s filtered student list to PDF.",
+                    disabled: !detailEvent,
+                    onClick: () => {
+                      if (!detailEvent) return;
+                      exportPdfEvent(detailEvent, exportFilteredEventStudents);
+                    },
+                  },
+                ]}
+              />
               <div className="relative">
                 <button
                   type="button"
@@ -2217,216 +2197,6 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
       )}
       {/* ── End Import Event Modal ──────────────────────────────────────────── */}
 
-      {exportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className={`w-full max-w-md rounded-xl bg-white p-5 shadow-xl ${ATTENDANCE_TEXT}`}>
-            <h3 className="text-lg font-semibold text-black">Export / reports</h3>
-            <p className="mt-2 text-sm text-black">
-              Download attendance data as CSV (Excel) or PDF. Filters below apply to both formats.
-            </p>
-            <div className="mt-3 rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-black">
-                All-events student export filters
-              </p>
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <select
-                  value={exportAllEventId}
-                  onChange={(e) => setExportAllEventId(e.target.value)}
-                  className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30 sm:col-span-2"
-                >
-                  <option value="all">All events</option>
-                  {exportCompletedEventOptions.map((ev) => (
-                    <option key={ev.id} value={String(ev.id)}>
-                      {ev.name} - {formatEventDateForDisplay(ev.date)}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={exportAllEventStatus}
-                  onChange={(e) => setExportAllEventStatus(e.target.value)}
-                  className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
-                >
-                  <option value="all">All event statuses</option>
-                  <option value="completed">Completed</option>
-                  <option value="ongoing">Ongoing</option>
-                  <option value="upcoming">Upcoming</option>
-                </select>
-                {SHOW_COLLEGE_MAJOR_FILTER_DROPDOWNS && (
-                <select
-                  value={exportAllCollege}
-                  onChange={(e) => setExportAllCollege(e.target.value)}
-                  className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
-                >
-                  <option value="all">All colleges</option>
-                  {exportAllCollegeOptions.map((college) => (
-                    <option key={college} value={college}>
-                      {college}
-                    </option>
-                  ))}
-                </select>
-                )}
-                <select
-                  value={exportAllCourse}
-                  onChange={(e) => setExportAllCourse(e.target.value)}
-                  className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
-                >
-                  <option value="all">All courses</option>
-                  {exportAllCourseOptions.map((course) => (
-                    <option key={course} value={course}>
-                      {course}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <p className="mt-2 text-xs text-black/80">
-                {exportAllFilteredRows.length} student record(s) match these filters.
-              </p>
-            </div>
-            {detailEvent ? (
-              <div className="mt-3 rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] p-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-black">
-                  Current event filters - {detailEvent.name}
-                </p>
-                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <input
-                    type="search"
-                    value={exportEventSearch}
-                    onChange={(e) => setExportEventSearch(e.target.value)}
-                    placeholder="Search name, ID, or year level"
-                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black placeholder:text-black/45 focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30 sm:col-span-2"
-                  />
-                  {SHOW_COLLEGE_MAJOR_FILTER_DROPDOWNS && (
-                  <select
-                    value={exportEventCollege}
-                    onChange={(e) => setExportEventCollege(e.target.value)}
-                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30 sm:col-span-2"
-                  >
-                    <option value="all">All colleges</option>
-                    {studentListCollegeOptions.map((col) => (
-                      <option key={col} value={col}>
-                        {col}
-                      </option>
-                    ))}
-                  </select>
-                  )}
-                  <select
-                    value={exportEventCourse}
-                    onChange={(e) => setExportEventCourse(e.target.value)}
-                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
-                  >
-                    <option value="all">All courses</option>
-                    {exportEventCourses.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                  {SHOW_COLLEGE_MAJOR_FILTER_DROPDOWNS && (
-                  <select
-                    value={exportEventMajor}
-                    onChange={(e) => setExportEventMajor(e.target.value)}
-                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
-                  >
-                    <option value="all">All majors</option>
-                    {exportEventMajorOptions.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
-                  )}
-                  <select
-                    value={exportEventYearLevel}
-                    onChange={(e) => setExportEventYearLevel(e.target.value)}
-                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30 sm:col-span-2"
-                  >
-                    <option value="all">All year levels</option>
-                    {studentListYearLevelOptions.map((yl) => (
-                      <option key={yl} value={String(yl)}>
-                        {yl}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={exportEventAttendance}
-                    onChange={(e) => setExportEventAttendance(e.target.value)}
-                    className="h-9 rounded-lg border border-[#07713c]/40 bg-white px-2.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
-                  >
-                    <option value="all">All statuses</option>
-                    <option value="attended">Attended</option>
-                    <option value="absent">Absent</option>
-                    {detailEvent.status === "upcoming" ? <option value="no_record">No record</option> : null}
-                  </select>
-                </div>
-                <p className="mt-2 text-xs text-black/80">
-                  {exportFilteredEventStudents.length} student(s) match these filters.
-                </p>
-              </div>
-            ) : null}
-            <div className="mt-4 space-y-2">
-              <button
-                type="button"
-                onClick={() => {
-                  void downloadExcelAll();
-                  setExportOpen(false);
-                }}
-                className="w-full rounded-lg border border-[#07713c] bg-[#07713c]/10 px-4 py-2.5 text-sm font-medium text-black hover:bg-[#07713c]/15"
-              >
-                Download Excel (.xlsx) — all events
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  exportPdfAll();
-                  setExportOpen(false);
-                }}
-                className="w-full rounded-lg border border-[#07713c]/40 px-4 py-2.5 text-sm font-medium text-black hover:bg-[#07713c]/10"
-              >
-                Download PDF — all events (students)
-              </button>
-              <button
-                type="button"
-                disabled={!detailEvent}
-                onClick={() => {
-                  if (!detailEvent) return;
-                  void downloadExcelEvent(detailEvent);
-                  setExportOpen(false);
-                }}
-                className={`w-full rounded-lg border px-4 py-2.5 text-sm font-medium ${
-                  detailEvent
-                    ? "border-[#07713c]/40 text-black hover:bg-[#07713c]/10"
-                    : "border-[#07713c]/20 text-black/50"
-                }`}
-              >
-                Download Excel (.xlsx) — current event
-              </button>
-              <button
-                type="button"
-                disabled={!detailEvent}
-                onClick={() => {
-                  if (!detailEvent) return;
-                  exportPdfEvent(detailEvent, exportFilteredEventStudents);
-                  setExportOpen(false);
-                }}
-                className={`w-full rounded-lg border px-4 py-2.5 text-sm font-medium ${
-                  detailEvent
-                    ? "border-[#07713c]/40 text-black hover:bg-[#07713c]/10"
-                    : "border-[#07713c]/20 text-black/50"
-                }`}
-              >
-                Download PDF — current event (filtered students)
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setExportOpen(false)}
-              className="mt-4 w-full rounded-lg border border-[#07713c]/30 py-2 text-sm text-black hover:bg-[#07713c]/10"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

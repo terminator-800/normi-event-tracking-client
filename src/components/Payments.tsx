@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NavbarAcademicPeriod } from "./Navbar";
 import UserCircleIcon from "./UserCircleIcon";
 import PaginationBar from "./PaginationBar";
 import { useGovernorScope } from "../hooks/useGovernorScope";
-import { getDashboardRoleLabel, getFullNameFromSession, getNavDisplayNameFromSession, isCsgPresident } from "../utils/roles";
-import { useAuthSession } from "../hooks/auth";
+import { getDashboardRoleLabel, isCsgPresident } from "../utils/roles";
 import { formatEventDateForDisplay } from "../hooks/useGetEvents";
-import { lookupPaymentStudent, useGetPaymentStudent, useGetPaymentSummary, useGetPayments, useGetPaymentTransactions } from "../hooks/useGetPayments";
-import { useRecordPayment } from "../hooks/useRecordPayment";
+import { useGetPaymentSummary, useGetPayments, useGetPaymentTransactions } from "../hooks/useGetPayments";
 import { getAppNavItems } from "../utils/appNav";
 import { formatCourseWithMajor } from "../utils/courseMajorDisplay";
 import { downloadPdfTable } from "../utils/downloadPdfTable";
@@ -22,6 +20,7 @@ import type {
   StudentExportFilters,
 } from "../types/desk-pages";
 import Sidebar from "./Sidebar";
+import NewPayment from "./NewPayment";
 
 
 /** Payments page main content text (sidebar nav excluded). */
@@ -131,18 +130,6 @@ function enrichPaymentStudent(student: PaymentStudentRecord | null | undefined):
   };
 }
 
-function makeReceiptNumber() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  const h = String(now.getHours()).padStart(2, "0");
-  const min = String(now.getMinutes()).padStart(2, "0");
-  const s = String(now.getSeconds()).padStart(2, "0");
-  const ms = String(now.getMilliseconds()).padStart(3, "0");
-  return `RCP-${y}${m}${d}-${h}${min}${s}${ms}`;
-}
-
 function downloadTextFile(filename: string, text: string, mime = "text/csv;charset=utf-8"): void {
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -238,11 +225,8 @@ function transactionToReceipt(tx: PaymentTransaction): PaymentReceipt {
 type PaymentsPageProps = DeskPageProps;
 
 export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
-  const { data: session } = useAuthSession();
   const { role, isGovernor, governorScope } = useGovernorScope();
   void getDashboardRoleLabel(isGovernor, governorScope, role);
-  const encoderDisplayName =
-    getFullNameFromSession(session) || getNavDisplayNameFromSession(session) || "—";
   const normalizedRole = String(role || "").toLowerCase().trim();
   const isAdmin = normalizedRole === "admin";
   const isSuperAdmin = normalizedRole === "super_admin";
@@ -255,21 +239,9 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
       isLoading: boolean;
       isError: boolean;
     };
-  const recordPaymentMutation = useRecordPayment();
-
-  const [showPayStudentModal, setShowPayStudentModal] = useState(false);
-  const [payFlowStep, setPayFlowStep] = useState("search");
-  const [payFlowStudentId, setPayFlowStudentId] = useState("");
-  const [addStudentIdentifier, setAddStudentIdentifier] = useState("");
-  const [addStudentError, setAddStudentError] = useState("");
-  const [isAddingStudent, setIsAddingStudent] = useState(false);
   const [transactionSearch, setTransactionSearch] = useState("");
   const [transactionsPage, setTransactionsPage] = useState(1);
   const [summaryAmountsVisible, setSummaryAmountsVisible] = useState(true);
-  const addStudentInputRef = useRef<HTMLInputElement | null>(null);
-  const addStudentAutoSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [paymentAmountInput, setPaymentAmountInput] = useState("");
-  const [paymentError, setPaymentError] = useState("");
   const [lastReceipt, setLastReceipt] = useState<PaymentReceipt | null>(null);
   const [selectedTransaction, setSelectedTransaction] = useState<PaymentTransaction | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -284,17 +256,6 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
   const { data: paymentRowsFromApi = [], isLoading: isExportListLoading } = useGetPayments({
     enabled: exportOpen,
   });
-
-  const {
-    data: payFlowStudentRaw,
-    isLoading: isPayFlowStudentLoading,
-    isError: isPayFlowStudentError,
-  } = useGetPaymentStudent(payFlowStudentId, {
-    enabled: showPayStudentModal && payFlowStep === "review" && Boolean(payFlowStudentId),
-  });
-
-  const payFlowStudent = useMemo(() => enrichPaymentStudent(payFlowStudentRaw), [payFlowStudentRaw]);
-  const selectedRow = payFlowStudent;
 
   const filteredTransactions = useMemo(() => {
     const q = transactionSearch.trim().toLowerCase();
@@ -325,20 +286,6 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
   useEffect(() => {
     setTransactionsPage((p) => Math.min(p, transactionsTotalPages));
   }, [transactionsTotalPages]);
-
-  const deskEvents = useMemo(() => payFlowStudent?.events ?? [], [payFlowStudent]);
-
-  const deskFilteredTotalFine = useMemo(
-    () => deskEvents.reduce((sum, event) => sum + (Number(event.fine) || 0), 0),
-    [deskEvents],
-  );
-
-  const payFlowPreviewNewBalance = useMemo(() => {
-    if (!payFlowStudent) return 0;
-    const amount = parseMoneyInput(paymentAmountInput);
-    const applied = Number.isFinite(amount) ? Math.max(0, amount) : 0;
-    return Math.max(0, payFlowStudent.remaining - applied);
-  }, [payFlowStudent, paymentAmountInput]);
 
   const totals = useMemo(
     () => ({
@@ -415,148 +362,8 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
     [exportStudentRows, exportSearch, exportStatusFilter, exportCollegeFilter, exportCourseFilter, exportYearFilter, exportBalanceFilter],
   );
 
-  const openPayStudentModal = () => {
-    setPayFlowStep("search");
-    setPayFlowStudentId("");
-    setAddStudentIdentifier("");
-    setAddStudentError("");
-    setPaymentAmountInput("");
-    setPaymentError("");
-    setShowPayStudentModal(true);
-  };
-
-  const closePayStudentModal = () => {
-    if (addStudentAutoSubmitTimerRef.current) {
-      clearTimeout(addStudentAutoSubmitTimerRef.current);
-      addStudentAutoSubmitTimerRef.current = null;
-    }
-    setShowPayStudentModal(false);
-    setPayFlowStep("search");
-    setPayFlowStudentId("");
-    setAddStudentIdentifier("");
-    setAddStudentError("");
-    setPaymentAmountInput("");
-    setPaymentError("");
-  };
-
-  const handleAddStudent = useCallback(async (rawIdentifier?: string) => {
-    const identifier = String(rawIdentifier ?? addStudentIdentifier ?? "").trim();
-    if (!identifier) {
-      setAddStudentError("Enter a Student ID or RFID.");
-      return;
-    }
-    setIsAddingStudent(true);
-    setAddStudentError("");
-    try {
-      const student = await lookupPaymentStudent(identifier);
-      if (!student?.studentId) {
-        setAddStudentError("Student not found or access denied.");
-        return;
-      }
-      setPayFlowStudentId(student.studentId);
-      setPayFlowStep("review");
-      setPaymentAmountInput("");
-      setPaymentError("");
-    } catch (error: unknown) {
-      const message =
-        typeof error === "object" &&
-        error != null &&
-        "response" in error &&
-        typeof (error as { response?: { data?: { message?: string } } }).response?.data?.message === "string"
-          ? (error as { response: { data: { message: string } } }).response.data.message
-          : "Student not found or access denied.";
-      setAddStudentError(message);
-    } finally {
-      setIsAddingStudent(false);
-    }
-  }, [addStudentIdentifier]);
-
-  useEffect(() => {
-    if (!showPayStudentModal || payFlowStep !== "search") return;
-    const identifier = addStudentIdentifier.trim();
-    if (!identifier || isAddingStudent) return;
-    if (!/^\d+$/.test(identifier) || identifier.length < MIN_AUTO_SUBMIT_LENGTH) return;
-
-    if (addStudentAutoSubmitTimerRef.current) clearTimeout(addStudentAutoSubmitTimerRef.current);
-    addStudentAutoSubmitTimerRef.current = setTimeout(() => {
-      handleAddStudent(identifier);
-    }, AUTO_SUBMIT_DEBOUNCE_MS);
-
-    return () => {
-      if (addStudentAutoSubmitTimerRef.current) {
-        clearTimeout(addStudentAutoSubmitTimerRef.current);
-        addStudentAutoSubmitTimerRef.current = null;
-      }
-    };
-  }, [addStudentIdentifier, handleAddStudent, isAddingStudent, payFlowStep, showPayStudentModal]);
-
-  useEffect(() => {
-    if (!showPayStudentModal || payFlowStep !== "search") return;
-    window.setTimeout(() => addStudentInputRef.current?.focus(), 0);
-  }, [payFlowStep, showPayStudentModal]);
-
-  const handleSubmitPayment = async () => {
-    if (!selectedRow) return;
-    const maxPayable = Math.max(0, selectedRow.totalFine - selectedRow.waivedAmount);
-    const previousBalance = selectedRow.remaining;
-    const amount = parseMoneyInput(paymentAmountInput);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setPaymentError("Enter a valid amount greater than zero.");
-      return;
-    }
-    if (amount > selectedRow.remaining) {
-      setPaymentError("Amount cannot be greater than remaining balance.");
-      return;
-    }
-    const roundedAmount = Math.round(amount * 100) / 100;
-    const newBalance = Math.max(0, previousBalance - roundedAmount);
-
-    if (roundedAmount > maxPayable) {
-      setPaymentError("Amount cannot be greater than total payable balance.");
-      return;
-    }
-
-    try {
-      const response = (await recordPaymentMutation.mutateAsync({
-        studentId: selectedRow.studentId ?? "",
-        amountPaid: roundedAmount,
-        paymentMethod: "Cash",
-        remarks: "",
-      } as never)) as {
-        transactionCode?: string;
-        receiptNo?: string;
-        encodedBy?: string;
-        previousBalance?: number;
-        amountPaid?: number;
-        newBalance?: number;
-      };
-      setLastReceipt({
-        transactionCode: response?.transactionCode || response?.receiptNo || makeReceiptNumber(),
-        receiptNo: response?.transactionCode || response?.receiptNo || makeReceiptNumber(),
-        createdAt: new Date().toISOString(),
-        encodedBy: response?.encodedBy || encoderDisplayName,
-        studentId: selectedRow.studentId,
-        studentName: selectedRow.studentName,
-        department: payFlowStudent?.departmentDisplay || payFlowStudent?.department || "—",
-        year: selectedRow.year ?? "—",
-        previousBalance: response?.previousBalance ?? previousBalance,
-        amountPaid: response?.amountPaid ?? roundedAmount,
-        newBalance: response?.newBalance ?? newBalance,
-        note: "",
-      });
-      closePayStudentModal();
-      setPaymentAmountInput("");
-      setPaymentError("");
-    } catch (error: unknown) {
-      const message =
-        typeof error === "object" &&
-        error != null &&
-        "response" in error &&
-        typeof (error as { response?: { data?: { message?: string } } }).response?.data?.message === "string"
-          ? (error as { response: { data: { message: string } } }).response.data.message
-          : "Unable to save payment right now.";
-      setPaymentError(message);
-    }
+  const handlePaymentSaved = (receipt: PaymentReceipt) => {
+    setLastReceipt(receipt);
   };
 
   const printReceipt = (receipt: PaymentReceipt) => {
@@ -757,13 +564,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                 <h2 className="text-lg font-bold text-black">Payment Transactions</h2>
                 <p className="text-sm text-black/75">Recorded payments only. Click a row to view details or print a receipt. Use + New Payment to post a new transaction.</p>
               </div>
-              <button
-                type="button"
-                onClick={openPayStudentModal}
-                className="rounded-lg border border-[#e6a100] bg-[#ffb300] px-4 py-2 text-sm font-semibold text-black hover:bg-[#e6a100]"
-              >
-                + New Payment
-              </button>
+              <NewPayment onSaved={handlePaymentSaved} />
             </div>
 
             <div className="p-4 border-b border-[#07713c]/20">
@@ -847,223 +648,6 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
           </div>
         </main>
       </div>
-
-      {showPayStudentModal && (
-        <div className="fixed inset-0 z-[62] flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-4xl max-h-[90vh] rounded-2xl bg-white shadow-2xl overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between border-b border-[#07713c]/30 bg-[#07713c]/10 px-5 py-3 shrink-0">
-              <h3 className="text-lg font-semibold text-black">
-                {payFlowStep === "search" ? "New Payment" : "Review Fines & Pay"}
-              </h3>
-              <button
-                type="button"
-                onClick={closePayStudentModal}
-                className="flex h-7 w-7 items-center justify-center rounded-full bg-[#ffb300] text-black hover:bg-[#e6a100]"
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
-
-            {payFlowStep === "search" ? (
-              <>
-                <div className="p-5 space-y-4">
-                  <p className="text-sm text-black/75">Search by Student ID or RFID. The student is not saved on this page — only the payment transaction is recorded.</p>
-                  <label className="block text-sm text-black">
-                    <span className="mb-1 block font-semibold">Student ID or RFID</span>
-                    <input
-                      ref={addStudentInputRef}
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      value={addStudentIdentifier}
-                      onChange={(e) => {
-                        setAddStudentIdentifier(e.target.value.replace(/\D/g, ""));
-                        if (addStudentError) setAddStudentError("");
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key !== "Enter") return;
-                        e.preventDefault();
-                        if (addStudentAutoSubmitTimerRef.current) {
-                          clearTimeout(addStudentAutoSubmitTimerRef.current);
-                          addStudentAutoSubmitTimerRef.current = null;
-                        }
-                        handleAddStudent(addStudentIdentifier);
-                      }}
-                      placeholder="Tap or enter Student ID / RFID"
-                      className="w-full rounded-lg border border-[#07713c]/40 px-3 py-2 text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
-                      autoFocus
-                    />
-                  </label>
-                  {addStudentError ? <p className="text-sm font-medium text-black">{addStudentError}</p> : null}
-                  {isAddingStudent ? <p className="text-sm text-black/75">Searching student...</p> : null}
-                </div>
-                <div className="px-5 py-3 border-t border-[#07713c]/20 flex justify-end gap-2 shrink-0">
-                  <button type="button" onClick={closePayStudentModal} className="px-4 py-2 rounded-lg border border-[#07713c]/30 text-black hover:bg-gray-50">
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleAddStudent()}
-                    disabled={isAddingStudent}
-                    className="px-4 py-2 rounded-lg border border-[#07713c] bg-[#07713c]/10 font-medium text-black hover:bg-[#07713c]/15 disabled:opacity-60"
-                  >
-                    {isAddingStudent ? "Searching..." : "Search Student"}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="flex flex-col min-h-0 flex-1">
-                <div className="p-5 overflow-y-auto flex-1 space-y-4">
-                  {isPayFlowStudentLoading ? (
-                    <p className="text-sm text-black/85 text-center py-8">Calculating fines...</p>
-                  ) : isPayFlowStudentError || !payFlowStudent ? (
-                    <p className="text-sm text-black text-center py-8">Unable to load student fines.</p>
-                  ) : (
-                    <>
-                      <div className="rounded-xl border border-[#07713c]/25 bg-[#07713c]/[0.04] p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-black">
-                        <div>
-                          <p className="text-lg font-bold">{payFlowStudent.studentName}</p>
-                          <p className="text-sm">ID: {payFlowStudent.studentId}</p>
-                          <p className="text-sm">{payFlowStudent.departmentDisplay || payFlowStudent.department || "—"} · Year {payFlowStudent.year}</p>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-sm">
-                          <div className="rounded-lg border border-[#07713c]/20 bg-white px-3 py-2">
-                            <p className="text-xs text-black/70">Total Fine</p>
-                            <p className="font-bold tabular-nums">{formatPhp(payFlowStudent.totalFine)}</p>
-                          </div>
-                          <div className="rounded-lg border border-[#07713c]/20 bg-white px-3 py-2">
-                            <p className="text-xs text-black/70">Remaining</p>
-                            <p className="font-bold tabular-nums">{formatPhp(payFlowStudent.remaining)}</p>
-                          </div>
-                          <div className="rounded-lg border border-[#07713c]/20 bg-white px-3 py-2">
-                            <p className="text-xs text-black/70">Paid</p>
-                            <p className="font-bold tabular-nums">{formatPhp(payFlowStudent.paidAmount)}</p>
-                          </div>
-                          <div className="hidden rounded-lg border border-[#07713c]/20 bg-white px-3 py-2">
-                            <p className="text-xs text-black/70">Waived</p>
-                            <p className="font-bold tabular-nums">{formatPhp(payFlowStudent.waivedAmount)}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="min-w-0 overflow-x-auto rounded-lg border border-[#07713c]/30">
-                        <table className={`w-full text-sm ${TABLE_CELL_NOWRAP}`}>
-                          <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-xs uppercase ${PAYMENTS_TH_TEXT}`}>
-                            <tr>
-                              <th className="px-4 py-2 text-left">Event</th>
-                              <th className="px-4 py-2 text-center">Date</th>
-                              <th className="px-4 py-2 text-center">Session</th>
-                              <th className="px-4 py-2 text-right">Remaining Fine</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {deskEvents.length === 0 ? (
-                              <tr>
-                                <td colSpan={4} className="px-4 py-6 text-center text-black/85">No completed events with fines.</td>
-                              </tr>
-                            ) : (
-                              deskEvents.map((event, index) => (
-                                <tr key={event.id ?? index} className="border-t border-[#07713c]/20">
-                                  <td className="px-4 py-2.5 text-black">{event.name}</td>
-                                  <td className="px-4 py-2.5 text-center text-black">{formatEventDateForDisplay(event.date ?? "")}</td>
-                                  <td className="px-4 py-2.5 text-center text-black">{sessionLabel(event.sessionKind)}</td>
-                                  <td className="px-4 py-2.5 text-right tabular-nums text-black">{formatPhp(event.fine)}</td>
-                                </tr>
-                              ))
-                            )}
-                          </tbody>
-                          <tfoot>
-                            <tr className="bg-[#07713c]/[0.07] border-t border-[#07713c]/30">
-                              <td colSpan={3} className="px-4 py-3 text-right text-sm font-semibold text-black">Total remaining fines</td>
-                              <td className="px-4 py-3 text-right text-sm font-bold tabular-nums text-black">{formatPhp(deskFilteredTotalFine)}</td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-
-                      <div className="rounded-xl border border-[#07713c]/25 bg-gray-50 p-4 space-y-3">
-                        <p className="text-sm font-semibold uppercase tracking-wide text-black/80">Record Payment</p>
-                        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-black">
-                          <span>Current balance</span>
-                          <span className="font-semibold tabular-nums">{formatPhp(payFlowStudent.remaining)}</span>
-                        </div>
-                        <label className="block text-sm text-black">
-                          <span className="mb-1 block font-semibold">Amount to pay</span>
-                          <div className="flex items-center gap-2 rounded-lg border border-[#07713c]/40 bg-white px-3 py-2">
-                            <span className="text-black">₱</span>
-                            <input
-                              value={paymentAmountInput}
-                              onChange={(e) => {
-                                const normalized = e.target.value
-                                  .replace(/[^\d.]/g, "")
-                                  .replace(/(\..*)\./g, "$1");
-                                setPaymentAmountInput(normalized);
-                                if (paymentError) setPaymentError("");
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") handleSubmitPayment();
-                              }}
-                              placeholder="0.00"
-                              inputMode="decimal"
-                              className="w-full bg-transparent text-right tabular-nums text-black outline-none focus:ring-0"
-                            />
-                          </div>
-                        </label>
-                        {payFlowStudent.remaining > 0 ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setPaymentAmountInput(String(payFlowStudent.remaining));
-                              if (paymentError) setPaymentError("");
-                            }}
-                            className="text-xs font-medium text-[#07713c] hover:underline underline-offset-2"
-                          >
-                            Pay full balance ({formatPhp(payFlowStudent.remaining)})
-                          </button>
-                        ) : null}
-                        <div className="flex items-center justify-between border-t border-[#07713c]/20 pt-2 text-sm text-black">
-                          <span className="font-medium">New balance after payment</span>
-                          <span className="font-bold tabular-nums text-[#07713c]">{formatPhp(payFlowPreviewNewBalance)}</span>
-                        </div>
-                        {paymentError ? <p className="text-sm font-medium text-black">{paymentError}</p> : null}
-                      </div>
-                    </>
-                  )}
-                </div>
-                <div className="px-5 py-3 border-t border-[#07713c]/20 flex flex-wrap justify-between gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPayFlowStep("search");
-                      setPayFlowStudentId("");
-                      setAddStudentIdentifier("");
-                      setPaymentAmountInput("");
-                      setPaymentError("");
-                    }}
-                    className="px-4 py-2 rounded-lg border border-[#07713c]/30 text-black hover:bg-gray-50"
-                  >
-                    Search Another
-                  </button>
-                  <div className="flex gap-2">
-                    <button type="button" onClick={closePayStudentModal} className="px-4 py-2 rounded-lg border border-[#07713c]/30 text-black hover:bg-gray-50">
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSubmitPayment}
-                      disabled={!payFlowStudent || payFlowStudent.remaining <= 0 || recordPaymentMutation.isPending}
-                      className="px-4 py-2 rounded-lg border border-[#07713c] bg-[#07713c] font-semibold text-white hover:bg-[#055a2e] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {recordPaymentMutation.isPending ? "Saving..." : "Save Payment"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {exportOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

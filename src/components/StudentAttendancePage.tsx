@@ -8,6 +8,7 @@ import { getDashboardRoleLabel } from "../utils/roles";
 import type { DeskPageProps } from "../types/desk-pages";
 import StudentAttendanceDashboard from "./StudentAttendanceDashboard";
 import Sidebar from "./Sidebar";
+import ExportReportsButton from "./ExportReports";
 
 /** Students page main content text (sidebar nav excluded). */
 const STUDENTS_PAGE_TEXT = "text-black";
@@ -16,12 +17,10 @@ const STUDENTS_PAGE_TEXT = "text-black";
 export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPageProps) {
   const navigate = useNavigate();
   const [showLogout, setShowLogout] = useState(false);
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportMode] = useState("export");
   const [openStudentsExport, setOpenStudentsExport] = useState<(() => void) | null>(null);
 
   const { role, isGovernor, governorScope } = useGovernorScope();
-  const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
+  void getDashboardRoleLabel(isGovernor, governorScope, role);
   const normalizedRole = String(role || "").toLowerCase().trim();
   const isAdmin = normalizedRole === "admin";
   const isSuperAdmin = normalizedRole === "super_admin";
@@ -39,8 +38,6 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
     onNavigate?.(itemId);
   };
 
-  const navActive = (itemId: string) => itemId === "students";
-
   return (
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       <Sidebar navItems={navItems} onNavigate={handleNav} activeNavId="students" />
@@ -53,13 +50,19 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
               <NavbarAcademicPeriod className="mt-1" />
             </div>
             <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={() => openStudentsExport?.()}
-                className="rounded-lg border border-[#e6a100] bg-[#ffb300] px-3 py-2 text-sm font-medium text-black hover:bg-[#e6a100]"
-              >
-                Export / Reports
-              </button>
+              <ExportReportsButton
+                title="Export / reports"
+                description="Open the student export workflow from here."
+                actions={[
+                  {
+                    label: "Open export workflow",
+                    description: "Launch the report export flow for the current view.",
+                    onClick: () => {
+                      openStudentsExport?.();
+                    },
+                  },
+                ]}
+              />
               <div className="relative">
                 <button
                   type="button"
@@ -96,72 +99,6 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
           </div>
         </main>
       </div>
-
-      {showReportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl overflow-hidden">
-            <div className="bg-[#07713c] px-5 py-3">
-              <h3 className="text-white font-semibold">
-                {reportMode === "settings"
-                  ? `${roleLabel} Settings`
-                  : reportMode === "import"
-                    ? "Import Data"
-                    : "Export Data"}
-              </h3>
-            </div>
-            <div className="p-5 space-y-4 text-sm">
-              <p className="text-gray-600">
-                {reportMode === "settings"
-                  ? "Settings are not implemented yet (this is a placeholder)."
-                  : reportMode === "import"
-                    ? "Choose what you want to import."
-                    : "Choose what you want to export."}
-              </p>
-              {reportMode !== "settings" && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    className="rounded-xl border border-gray-300 p-4 text-left hover:border-[#07713c] hover:bg-green-50 transition-colors"
-                    onClick={() => setShowReportModal(false)}
-                  >
-                    <p className="font-semibold text-gray-900">
-                      {reportMode === "import" ? "Import Attendance" : "Export Attendance"}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {reportMode === "import"
-                        ? "Import attendance records into the system."
-                        : "Download attendance records for reports."}
-                    </p>
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-xl border border-gray-300 p-4 text-left hover:border-[#07713c] hover:bg-green-50 transition-colors"
-                    onClick={() => setShowReportModal(false)}
-                  >
-                    <p className="font-semibold text-gray-900">
-                      {reportMode === "import" ? "Import Students" : "Export Students"}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {reportMode === "import"
-                        ? "Import student records into the system."
-                        : "Download student or department records."}
-                    </p>
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="px-4 py-3 border-t border-gray-200 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowReportModal(false)}
-                className="px-4 py-2 rounded-lg bg-[#07713c] text-white cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
