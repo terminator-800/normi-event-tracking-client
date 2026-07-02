@@ -1,10 +1,47 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import settingsIcon from "../assets/material-symbols_settings.svg";
+import { useActiveAcademicPeriod } from "../hooks/useAcademicPeriods";
+import { useAuthSession } from "../hooks/auth";
+import { getActiveAcademicPeriodFromSession } from "../utils/academicPeriod";
+import { getRoleFromSession, isOperationalDeskRole, isSuperAdminRole } from "../utils/roles";
 
 type NavbarProps = {
   showSettings?: boolean;
 };
+
+export type NavbarAcademicPeriodProps = {
+  className?: string;
+};
+
+export function NavbarAcademicPeriod({ className = "" }: NavbarAcademicPeriodProps) {
+  const { data: session } = useAuthSession();
+  const role = getRoleFromSession(session);
+  const { data: activePeriodQuery, isLoading } = useActiveAcademicPeriod(isOperationalDeskRole(role));
+
+  if (isSuperAdminRole(role)) return null;
+
+  const activePeriod = activePeriodQuery ?? getActiveAcademicPeriodFromSession(session);
+
+  if (isLoading) {
+    return <p className={`text-sm text-gray-500 ${className}`}>Loading academic period...</p>;
+  }
+
+  if (activePeriod) {
+    const label = activePeriod.label?.trim() || `${activePeriod.school_year} · ${activePeriod.semester}`;
+    return (
+      <p className={`text-sm font-medium text-[#055a2e] ${className}`} title="Active academic period">
+        {label}
+      </p>
+    );
+  }
+
+  return (
+    <p className={`text-sm font-medium text-amber-800 ${className}`} title="No active academic period">
+      No active school year / semester
+    </p>
+  );
+}
 
 export default function Navbar({ showSettings = false }: NavbarProps) {
   const navigate = useNavigate();

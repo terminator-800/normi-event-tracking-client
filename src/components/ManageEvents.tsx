@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import AddEvent from "./AddEvent";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
-import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
+import { NavbarAcademicPeriod } from "./Navbar";
 import UserCircleIcon from "./UserCircleIcon";
 import { useGetAllEvents } from "../hooks/useGetAllEvents";
 import { useEditEvent } from "../hooks/useEditEvent";

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
+import { NavbarAcademicPeriod } from "./Navbar";
 import UserCircleIcon from "./UserCircleIcon";
 import PaginationBar from "./PaginationBar";
 import { useGovernorScope } from "../hooks/useGovernorScope";

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
+import { NavbarAcademicPeriod } from "./Navbar";
 import UserCircleIcon from "./UserCircleIcon";
 import CreateUserModal from "./CreateUserModal";
 import { getAppNavItems } from "../utils/appNav";

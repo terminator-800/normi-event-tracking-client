@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import axiosApi from "../api/axiosInstance";
 import Sidebar from "./Sidebar";
 import UserCircleIcon from "./UserCircleIcon";
-import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
+import { NavbarAcademicPeriod } from "./Navbar";
 import { getAppNavItems } from "../utils/appNav";
 import { isCsgPresident } from "../utils/roles";
 import { useGovernorScope } from "../hooks/useGovernorScope";

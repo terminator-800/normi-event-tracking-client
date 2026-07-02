@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import Sidebar from "../components/Sidebar";
 import UserCircleIcon from "../components/UserCircleIcon";
-import NavbarAcademicPeriod from "../components/NavbarAcademicPeriod";
+import { NavbarAcademicPeriod } from "../components/Navbar";
 import type { AppNavId } from "../utils/appNav";
 
 export type DashboardNavItem = {

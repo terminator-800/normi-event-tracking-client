@@ -4,7 +4,7 @@ import { Pie } from "react-chartjs-2";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
-import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
+import { NavbarAcademicPeriod } from "./Navbar";
 import UserCircleIcon from "./UserCircleIcon";
 import {
   APP_ROUTES,

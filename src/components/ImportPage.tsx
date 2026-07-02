@@ -1,7 +1,7 @@
 import { type ChangeEvent, useMemo, useRef, useState } from "react";
 import axiosApi from "../api/axiosInstance";
 import Sidebar from "./Sidebar";
-import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
+import { NavbarAcademicPeriod } from "./Navbar";
 import UserCircleIcon from "./UserCircleIcon";
 import PaginationBar from "./PaginationBar";
 import { getAppNavItems } from "../utils/appNav";

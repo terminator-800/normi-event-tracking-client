@@ -5,7 +5,7 @@
 import { useState } from "react";
 import Sidebar from "./Sidebar";
 import UserCircleIcon from "./UserCircleIcon";
-import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
+import { NavbarAcademicPeriod } from "./Navbar";
 import { getAppNavItems, type AppNavId } from "../utils/appNav";
 import type { DeskPageProps } from "../types/desk-pages";
 

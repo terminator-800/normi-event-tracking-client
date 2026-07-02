@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
+import { NavbarAcademicPeriod } from "./Navbar";
 import UserCircleIcon from "./UserCircleIcon";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { getAppNavItems, resolveNavRoute } from "../utils/appNav";
