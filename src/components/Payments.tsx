@@ -779,7 +779,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
               <button
                 type="button"
                 onClick={openPayStudentModal}
-                className="rounded-lg border border-[#e6a100] bg-[#ffb300] px-4 py-2 text-sm font-semibold text-black hover:bg-[#e6a100]"
+                className="rounded-lg border bg-[#07713C] px-4 py-2 text-sm font-semibold text-white hover:bg-[#e6a100]"
               >
                 + New Payment
               </button>
