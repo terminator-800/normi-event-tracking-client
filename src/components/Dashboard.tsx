@@ -1,3 +1,3 @@
-import DashboardContent from "./layout/DashboardContent";
+import DashboardContent from "../layout/DashboardContent";
 
 export default DashboardContent;

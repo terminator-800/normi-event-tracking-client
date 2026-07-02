@@ -2,21 +2,21 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Chart as ChartJS, type ChartOptions } from "chart.js/auto";
 import { Line, Doughnut } from "react-chartjs-2";
 import DashboardLayout from "./DashboardLayout";
-import EventCard from "../EventCard";
-import { getAppNavItems } from "../../utils/appNav";
+import EventCard from "../components/EventCard";
+import { getAppNavItems } from "../utils/appNav";
 import {
   getDashboardRoleLabel,
   getNavDisplayNameFromSession,
   isSuperAdminRole,
   isAdminRole,
   isCsgPresident,
-} from "../../utils/roles";
-import { useAuthSession } from "../../hooks/auth";
-import { useGovernorScope } from "../../hooks/useGovernorScope";
-import { useGetEvents, formatEventDateForDisplay } from "../../hooks/useGetEvents";
-import { useSuperAdminStats } from "../../hooks/useSuperAdminData";
-import type { DeskPageProps } from "../../types/desk-pages";
-import type { DisplayEvent } from "../../types/events";
+} from "../utils/roles";
+import { useAuthSession } from "../hooks/auth";
+import { useGovernorScope } from "../hooks/useGovernorScope";
+import { useGetEvents, formatEventDateForDisplay } from "../hooks/useGetEvents";
+import { useSuperAdminStats } from "../hooks/useSuperAdminData";
+import type { DeskPageProps } from "../types/desk-pages";
+import type { DisplayEvent } from "../types/events";
 
 void ChartJS;
 

@@ -10,7 +10,7 @@ import Payments from "./components/Payments";
 import ImportPage from "./components/ImportPage";
 import UsersPage from "./components/UsersPage";
 import AcademicSettingsPage from "./components/AcademicSettingsPage";
-import DashboardContent from "./components/layout/DashboardContent";
+import DashboardContent from "./layout/DashboardContent";
 import AdminManagementPage from "./components/AdminManagementPage";
 import RolesPermissionsPage from "./components/RolesPermissionsPage";
 import SystemSettingsPage from "./components/SystemSettingsPage";
