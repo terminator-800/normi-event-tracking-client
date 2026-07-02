@@ -1039,7 +1039,7 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
 
         <div className="min-w-0 overflow-x-auto">
           <table className={`w-full min-w-0 table-fixed text-sm ${TABLE_CELL_NOWRAP}`}>
-            <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-xs uppercase tracking-wide ${STUDENTS_TH_TEXT}`}>
+            <thead className={`border-b border-[#07713c]/30 bg-[#07713c] text-xs uppercase tracking-wide ${STUDENTS_TH_TEXT}`}>
               <tr>
                 <th className="w-[14%] px-3 py-2.5 text-left align-middle">Student ID</th>
                 <th className="w-[26%] px-3 py-2.5 text-left align-middle">Name</th>
@@ -1651,7 +1651,7 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                   <table
                     className={`w-full text-sm ${TABLE_CELL_NOWRAP} ${narrowTimeColumns ? "min-w-[720px]" : "min-w-[960px]"}`}
                   >
-                    <thead className={`border-b border-[#07713c]/20 bg-[#ffb300] text-center text-xs uppercase ${STUDENTS_TH_TEXT}`}>
+                    <thead className={`border-b border-[#07713c]/20 bg-[#07713c] text-center text-xs uppercase ${STUDENTS_TH_TEXT}`}>
                       <tr>
                         <th className="border-r border-[#07713c]/20 px-4 py-2 align-bottom" rowSpan={2}>
                           Event name

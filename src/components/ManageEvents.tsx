@@ -104,7 +104,7 @@ const EVENTS_GRID_PAGE_SIZE = 12;
 
 /** Manage Event main content text (sidebar + top header excluded). */
 const EVENTS_PAGE_TEXT = "text-black";
-const EVENTS_TH_TEXT = "font-bold text-black";
+const EVENTS_TH_TEXT = "font-bold text-white";
 
 function normStatusKey(status: string | null | undefined): string {
   const n = String(status ?? "").trim().toLowerCase();
@@ -735,7 +735,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
           </div>
         </header>
 
-        <main className={`flex-1 overflow-auto p-6 ${EVENTS_PAGE_TEXT} [&_th]:font-bold [&_th]:!text-black`}>
+        <main className={`flex-1 overflow-auto p-6 ${EVENTS_PAGE_TEXT} [&_th]:font-bold [&_th]:!text-white`}>
           <div className="mx-auto w-full min-w-0 max-w-7xl space-y-4">
           {isEventsLoading && (
             <p className="mb-3 rounded-lg border border-[#07713c]/30 bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black">Loading events…</p>
@@ -825,7 +825,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                     <col className="w-[11%]" />
                     <col className="w-[20%]" />
                   </colgroup>
-                  <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-xs uppercase tracking-wide ${EVENTS_TH_TEXT}`}>
+                  <thead className={`border-b border-[#07713c]/30 bg-[#07713c] text-xs uppercase tracking-wide ${EVENTS_TH_TEXT}`}>
                     <tr>
                       <th className="align-middle px-3 py-3 text-left">Event Name</th>
                       <th className="align-middle px-3 py-3 text-left">Date</th>

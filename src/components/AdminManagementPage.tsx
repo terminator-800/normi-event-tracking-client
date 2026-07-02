@@ -8,7 +8,7 @@ import type { DeskPageProps } from "../types/desk-pages";
 type UserEditForm = { fullName: string; username: string; password: string };
 type UpdatePayload = { fullName?: string; username?: string; password?: string };
 
-const TH = "px-3 py-2.5 text-left align-middle font-bold text-black text-xs uppercase tracking-wide";
+const TH = "px-3 py-2.5 text-left align-middle font-bold text-white text-xs uppercase tracking-wide";
 const TD = "px-3 py-2 text-left leading-snug text-black text-sm";
 
 function roleBadge(role: string | undefined) {
@@ -153,7 +153,7 @@ export default function AdminManagementPage(props: DeskPageProps) {
       <div className="overflow-hidden rounded-xl border border-[#07713c]/25 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[700px] table-auto text-sm font-[Inter,sans-serif]">
-            <thead className="border-b border-[#07713c]/30 bg-[#ffb300]">
+            <thead className="border-b border-[#07713c]/30 bg-[#07713c]">
               <tr>
                 <th className={`${TH} w-[6%]`}>ID</th>
                 <th className={`${TH} w-[18%]`}>Full Name</th>

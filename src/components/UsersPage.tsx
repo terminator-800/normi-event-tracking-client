@@ -175,7 +175,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
           </div>
         </header>
 
-        <main className={`flex-1 overflow-auto p-6 ${USERS_PAGE_TEXT} [&_th]:font-bold [&_th]:!text-black`}>
+        <main className={`flex-1 overflow-auto p-6 ${USERS_PAGE_TEXT} [&_th]:font-bold [&_th]:!text-white`}>
           <div className="mx-auto w-full min-w-0 max-w-7xl">
             <section className="min-w-0 overflow-hidden rounded-lg border border-[#07713c]/30 bg-white shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#07713c]/20 px-4 pb-3 pt-4">
@@ -205,7 +205,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
 
               <div className="min-w-0 overflow-x-auto">
                 <table className={`w-full min-w-0 table-fixed text-sm font-[Inter,sans-serif] ${TABLE_CELL_NOWRAP}`}>
-                  <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-xs uppercase tracking-wide ${USERS_TH_TEXT}`}>
+                  <thead className={`border-b border-[#07713c]/30 bg-[#07713c] text-xs uppercase tracking-wide ${USERS_TH_TEXT}`}>
                     <tr>
                       <th className="w-[7%] px-3 py-2.5 text-left align-middle">ID</th>
                       <th className="w-[18%] px-3 py-2.5 text-left align-middle">Full Name</th>

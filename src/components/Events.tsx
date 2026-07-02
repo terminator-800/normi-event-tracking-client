@@ -1107,7 +1107,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
           </div>
         </header>
 
-        <main className={`flex-1 overflow-auto p-6 ${ATTENDANCE_TEXT} [&_th]:font-bold [&_th]:text-black`}>
+        <main className={`flex-1 overflow-auto p-6 ${ATTENDANCE_TEXT} [&_th]:font-bold [&_th]:text-white`}>
           <div className="mx-auto w-full min-w-0 max-w-7xl space-y-6">
           {isPageError && (
             <div
@@ -1327,7 +1327,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
               </div>
               <div className="mt-3 min-w-0 overflow-x-auto rounded-lg border border-[#07713c]/30">
                 <table className={`w-full border-collapse text-sm ${TABLE_CELL_NOWRAP}`}>
-                  <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-center text-xs uppercase ${ATTENDANCE_TH_TEXT}`}>
+                  <thead className={`border-b border-[#07713c]/30 text-center text-xs uppercase ${ATTENDANCE_TH_TEXT}`}>
                     <tr>
                       <th rowSpan={2} className="border-b border-x border-[#07713c]/30 px-3 py-2 align-middle">Student ID</th>
                       <th rowSpan={2} className="border-b border-x border-[#07713c]/30 px-3 py-2 align-middle">Name</th>
@@ -1664,7 +1664,8 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
             </div>
             <div className="min-w-0 overflow-x-auto">
               <table className={`w-full text-sm ${TABLE_CELL_NOWRAP}`}>
-                <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-left text-xs uppercase tracking-wide ${ATTENDANCE_TH_TEXT}`}>
+                <thead
+                 className={`border-b text-white border-[#07713c]/30 bg-[#07713c] text-left text-xs uppercase tracking-wide ${ATTENDANCE_TH_TEXT}`}>
                   <tr>
                     <th className="px-4 py-2.5 align-middle">Event name</th>
                     <th className="px-4 py-2.5 align-middle">Date</th>

@@ -110,7 +110,7 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
           </div>
         </header>
 
-        <main className={`flex-1 p-6 overflow-auto ${STUDENTS_PAGE_TEXT} [&_th]:font-bold [&_th]:text-black`}>
+        <main className={`flex-1 p-6 overflow-auto ${STUDENTS_PAGE_TEXT} [&_th]:font-bold [&_th]:text-white`}>
           <div className="mx-auto w-full min-w-0 max-w-7xl">
             <StudentAttendanceDashboard onRegisterExportOpen={setOpenStudentsExport} />
           </div>

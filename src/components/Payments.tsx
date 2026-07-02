@@ -27,7 +27,7 @@ import type {
 
 /** Payments page main content text (sidebar nav excluded). */
 const PAYMENTS_PAGE_TEXT = "text-black";
-const PAYMENTS_TH_TEXT = "font-bold text-black";
+const PAYMENTS_TH_TEXT = "font-bold text-white";
 const TABLE_CELL_NOWRAP = "[&_th]:whitespace-nowrap [&_tbody_td]:whitespace-nowrap";
 const TRANSACTIONS_PAGE_SIZE = 15;
 /** Wait for RFID wedge / typing to finish before auto-submit (same as Home attendance). */
@@ -696,7 +696,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
           </div>
         </header>
 
-        <main className={`flex-1 p-6 overflow-auto ${PAYMENTS_PAGE_TEXT} [&_th]:font-bold [&_th]:!text-black`}>
+        <main className={`flex-1 p-6 overflow-auto ${PAYMENTS_PAGE_TEXT} [&_th]:font-bold [&_th]:!text-white`}>
           <div className="mx-auto w-full min-w-0 max-w-7xl space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="relative bg-white rounded-lg border border-[#07713c]/30 p-4 shadow-sm">
@@ -797,7 +797,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
 
             <div className="min-w-0 overflow-x-auto">
               <table className={`w-full min-w-0 table-fixed text-sm ${TABLE_CELL_NOWRAP}`}>
-                <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-xs uppercase tracking-wide ${PAYMENTS_TH_TEXT}`}>
+                <thead className={`border-b border-[#07713c]/30 bg-[#07713c] text-xs uppercase tracking-wide ${PAYMENTS_TH_TEXT}`}>
                   <tr>
                     <th className="w-[18%] px-3 py-2.5 text-left align-middle">Transaction Code</th>
                     <th className="w-[12%] px-3 py-2.5 text-left align-middle">Date</th>
