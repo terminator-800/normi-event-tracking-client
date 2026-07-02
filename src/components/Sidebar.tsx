@@ -223,7 +223,7 @@ export interface SidebarNavItem {
 }
 
 interface SidebarProps {
-  navItems?: SidebarNavItem[];
+  navItems?: readonly SidebarNavItem[];
   onNavigate?: (id: string) => void;
   activeNavId?: string;
   className?: string;
