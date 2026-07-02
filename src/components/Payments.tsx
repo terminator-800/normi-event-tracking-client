@@ -661,7 +661,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
               <button
                 type="button"
                 onClick={() => setExportOpen(true)}
-                className="rounded-lg border border-[#e6a100] bg-[#ffb300] px-3 py-2 text-sm font-medium text-black hover:bg-[#e6a100]"
+                className="rounded-lg border bg-[#07713C] px-3 py-2 text-sm font-medium text-white hover:bg-[#e6a100]"
               >
                 Export / Reports
               </button>
