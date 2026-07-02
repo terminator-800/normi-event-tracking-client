@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
-import SidebarNavIcon from "./SidebarNavIcon";
-import SidebarBrand from "./SidebarBrand";
-import SidebarUserFullName from "./SidebarUserFullName";
+import Sidebar from "./Sidebar";
 import UserCircleIcon from "./UserCircleIcon";
 import { getAppNavItems } from "../utils/appNav";
 import { getDashboardRoleLabel, getRoleFromSession, isSuperAdminRole } from "../utils/roles";
@@ -274,25 +272,7 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
 
   return (
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
-      <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col [&_p]:text-white">
-        <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate?.(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-base font-medium transition-colors ${
-                item.id === "academic_settings" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
-      </aside>
+      <Sidebar navItems={navItems} onNavigate={onNavigate} activeNavId="academic_settings" />
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="bg-white border-b border-gray-200 px-6 py-4">

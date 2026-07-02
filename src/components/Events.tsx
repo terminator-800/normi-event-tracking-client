@@ -5,10 +5,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
-import SidebarNavIcon from "./SidebarNavIcon";
-import SidebarBrand from "./SidebarBrand";
 import UserCircleIcon from "./UserCircleIcon";
-import SidebarUserFullName from "./SidebarUserFullName";
 import {
   APP_ROUTES,
   eventsEventStudentsPath,
@@ -32,6 +29,7 @@ import type {
   DetailEventMeta,
   DeskPageProps,
 } from "../types/desk-pages";
+import Sidebar from "./Sidebar";
 
 void ChartJS;
 
@@ -1030,25 +1028,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
 
   return (
     <div className="flex min-h-screen bg-[#07713c]/[0.04] [&_button]:cursor-pointer">
-      <aside className="sticky top-0 flex h-screen max-h-screen w-64 shrink-0 flex-col self-start overflow-y-auto bg-[#07713c] text-white [&_p]:text-white">
-        <SidebarBrand />
-        <nav className="flex-1 space-y-1 px-4">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => handleNav(item.id)}
-              className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-medium transition-colors ${
-                item.id === "events" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
-      </aside>
+      <Sidebar navItems={navItems} onNavigate={handleNav} activeNavId="events" />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">

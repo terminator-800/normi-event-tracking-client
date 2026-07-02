@@ -1,15 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import SidebarNavIcon from "./SidebarNavIcon";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
-import SidebarBrand from "./SidebarBrand";
 import UserCircleIcon from "./UserCircleIcon";
-import SidebarUserFullName from "./SidebarUserFullName";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { getAppNavItems, resolveNavRoute } from "../utils/appNav";
 import { getDashboardRoleLabel } from "../utils/roles";
 import type { DeskPageProps } from "../types/desk-pages";
 import StudentAttendanceDashboard from "./StudentAttendanceDashboard";
+import Sidebar from "./Sidebar";
 
 /** Students page main content text (sidebar nav excluded). */
 const STUDENTS_PAGE_TEXT = "text-black";
@@ -45,25 +43,7 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
 
   return (
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
-      <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col [&_p]:text-white">
-        <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => handleNav(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                navActive(item.id) ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
-      </aside>
+      <Sidebar navItems={navItems} onNavigate={handleNav} activeNavId="students" />
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="bg-white border-b border-gray-200 px-6 py-4">

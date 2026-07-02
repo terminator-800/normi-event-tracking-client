@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useGetEvents, selectActiveOrUpcomingEvent } from "../hooks/useGetEvents";
 import EventSummaryStrip from "./EventSummaryStrip";
-import SidebarNavIcon from "./SidebarNavIcon";
+import Sidebar from "./Sidebar";
 import { SHOW_DASHBOARD_IN_NAV } from "../utils/appNav";
 import UserCircleIcon from "./UserCircleIcon";
 import type { DeskPageProps } from "../types/desk-pages";
@@ -146,6 +146,30 @@ export default function UserDashboard({ onLogout, onNavigate }: DeskPageProps) {
     timeOut: "",
   });
 
+  const navItems = [
+    ...(SHOW_DASHBOARD_IN_NAV
+      ? [{ id: "dashboard", label: "Governor Dashboard" }]
+      : []),
+    { id: "events", label: "Events" },
+    { id: "students", label: "Students" },
+    { id: "manage_events", label: "Manage Event" },
+  ] as const;
+
+  const activeNavId = SHOW_DASHBOARD_IN_NAV ? "dashboard" : "events";
+
+  const sidebarBrand = (
+    <div className="p-6 space-y-4">
+      <img
+        src="/logo.png"
+        alt="NMCI"
+        className="w-16 h-16 rounded-full bg-white/10 object-contain mx-auto"
+      />
+      <p className="text-xs text-center font-medium uppercase tracking-wider font-[Inter,sans-serif]">
+        Northern Mindanao Colleges, Inc.
+      </p>
+    </div>
+  );
+
   useEffect(() => {
     setShowLogout(false);
   }, [role]);
@@ -202,57 +226,12 @@ export default function UserDashboard({ onLogout, onNavigate }: DeskPageProps) {
 
   return (
     <div className="flex min-h-screen bg-gray-50">
-      <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col">
-        <div className="p-6 space-y-4">
-          <img
-            src="/logo.png"
-            alt="NMCI"
-            className="w-16 h-16 rounded-full bg-white/10 object-contain mx-auto"
-          />
-          <p className="text-xs text-center font-medium uppercase tracking-wider font-[Inter,sans-serif]">
-            Northern Mindanao Colleges, Inc.
-          </p>
-        </div>
-
-        <nav className="flex-1 px-4 space-y-1">
-          {SHOW_DASHBOARD_IN_NAV ? (
-            <button
-              onClick={() => onNavigate?.("dashboard")}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors bg-[#055a2e] text-white"
-            >
-              <SidebarNavIcon navId="dashboard" />
-              Governor Dashboard
-            </button>
-          ) : null}
-
-          <button
-            onClick={() => onNavigate?.("events")}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-              SHOW_DASHBOARD_IN_NAV ? "text-green-100 hover:bg-white/15" : "bg-[#055a2e] text-white"
-            }`}
-          >
-            <SidebarNavIcon navId="events" />
-            Events
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onNavigate?.("students")}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
-          >
-            <SidebarNavIcon navId="students" />
-            Students
-          </button>
-
-          <button
-            onClick={() => onNavigate?.("manage_events")}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
-          >
-            <SidebarNavIcon navId="manage_events" />
-            Manage Event
-          </button>
-        </nav>
-      </aside>
+      <Sidebar
+        navItems={navItems}
+        onNavigate={onNavigate}
+        activeNavId={activeNavId}
+        brand={sidebarBrand}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">

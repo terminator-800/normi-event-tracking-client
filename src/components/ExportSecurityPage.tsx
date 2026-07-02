@@ -1,9 +1,7 @@
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axiosApi from "../api/axiosInstance";
-import SidebarNavIcon from "./SidebarNavIcon";
-import SidebarBrand from "./SidebarBrand";
-import SidebarUserFullName from "./SidebarUserFullName";
+import Sidebar from "./Sidebar";
 import UserCircleIcon from "./UserCircleIcon";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import { getAppNavItems } from "../utils/appNav";
@@ -147,25 +145,7 @@ export default function ExportSecurityPage({ onNavigate, onLogout }: DeskPagePro
   return (
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       {/* Sidebar */}
-      <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col">
-        <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1 pb-4">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate?.(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                item.id === "export_security" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
-      </aside>
+      <Sidebar navItems={navItems} onNavigate={onNavigate} activeNavId="export_security" />
 
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">

@@ -1,9 +1,9 @@
-import type { SVGProps } from "react";
+import type { ReactNode, SVGProps } from "react";
+import csgLogo from "../assets/CSG LOGO.jpg";
+import { useAuthSession } from "../hooks/auth";
 import type { AppNavId } from "../utils/appNav";
+import { getNavDisplayNameFromSession } from "../utils/roles";
 
-/**
- * Line icons for governor/admin sidebar nav — distinct shapes per section.
- */
 type IconProps = SVGProps<SVGSVGElement>;
 
 const common: IconProps = {
@@ -42,7 +42,6 @@ function IconEvents(props: IconProps) {
   );
 }
 
-/** Single-student silhouette — Students nav. */
 function IconStudents(props: IconProps) {
   return (
     <svg {...common} {...props}>
@@ -164,7 +163,7 @@ function IconExportSecurity(props: IconProps) {
   );
 }
 
-const MAP = {
+const NAV_ICON_MAP = {
   dashboard: IconDashboard,
   events: IconAnalytics,
   students: IconStudents,
@@ -183,7 +182,74 @@ const MAP = {
 
 export type SidebarNavId = AppNavId;
 
-export default function SidebarNavIcon({ navId }: { navId: SidebarNavId }) {
-  const Cmp = MAP[navId] ?? IconDashboard;
+export function SidebarBrand() {
+  return (
+    <div className="p-6 space-y-4">
+      <img
+        src={csgLogo}
+        alt="Central Student Government"
+        className="mx-auto h-16 w-16 rounded-full bg-white/10 object-contain"
+      />
+      <p className="text-center text-xs font-medium uppercase tracking-wider font-[Inter,sans-serif] text-white">
+        Central Student Government
+      </p>
+    </div>
+  );
+}
+
+export function SidebarNavIcon({ navId }: { navId: SidebarNavId }) {
+  const Cmp = NAV_ICON_MAP[navId] ?? IconDashboard;
   return <Cmp />;
+}
+
+export function SidebarUserFullName() {
+  const { data: session } = useAuthSession();
+  const displayName = getNavDisplayNameFromSession(session);
+
+  if (!displayName) return null;
+
+  return (
+    <div className="shrink-0 border-t border-white/20 px-4 py-4 text-center">
+      <p className="truncate text-sm font-medium text-white" title={displayName}>
+        {displayName}
+      </p>
+    </div>
+  );
+}
+
+export interface SidebarNavItem {
+  id: AppNavId;
+  label: string;
+}
+
+interface SidebarProps {
+  navItems?: SidebarNavItem[];
+  onNavigate?: (id: string) => void;
+  activeNavId?: string;
+  className?: string;
+  brand?: ReactNode;
+}
+
+export default function Sidebar({ navItems = [], onNavigate, activeNavId = "dashboard", className, brand }: SidebarProps) {
+  return (
+    <aside className={`sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col ${className ?? ""}`.trim()}>
+      {brand ?? <SidebarBrand />}
+      <nav className="flex-1 px-4 space-y-1 pb-4">
+        {navItems.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onNavigate?.(item.id)}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
+              item.id === activeNavId ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
+            }`}
+          >
+            <SidebarNavIcon navId={item.id} />
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      <SidebarUserFullName />
+    </aside>
+  );
 }

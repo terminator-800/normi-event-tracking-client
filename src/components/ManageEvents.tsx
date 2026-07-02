@@ -2,10 +2,7 @@ import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import AddEvent from "./AddEvent";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
-import SidebarNavIcon from "./SidebarNavIcon";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
-import SidebarBrand from "./SidebarBrand";
-import SidebarUserFullName from "./SidebarUserFullName";
 import UserCircleIcon from "./UserCircleIcon";
 import { useGetAllEvents } from "../hooks/useGetAllEvents";
 import { useEditEvent } from "../hooks/useEditEvent";
@@ -35,6 +32,7 @@ import { getAudienceScopeLabel } from "../utils/eventAudienceLabel";
 import { getApiErrorMessage } from "../types/api";
 import type { DeskPageProps } from "../types/desk-pages";
 import type { DisplayEvent } from "../types/events";
+import Sidebar from "./Sidebar";
 
 type ManageEventsPageProps = DeskPageProps;
 type EventModalMode = "view" | "edit";
@@ -682,25 +680,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
   return (
     <div className="flex min-h-screen bg-[#07713c]/[0.04] [&_button]:cursor-pointer">
       {/* Sidebar — same green as Attendance */}
-      <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713c] text-white flex flex-col [&_p]:text-white">
-        <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate && onNavigate(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                activeNav === item.id ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
-      </aside>
+      <Sidebar navItems={navItems} onNavigate={onNavigate} activeNavId="manage_events" />
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
