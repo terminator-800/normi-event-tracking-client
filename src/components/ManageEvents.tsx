@@ -804,7 +804,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
               <button
                 type="button"
                 onClick={() => setShowAddEvent(true)}
-                className="rounded-lg border border-[#e6a100] bg-[#ffb300] px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#e6a100]"
+                className="rounded-lg border bg-[#07713C] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#e6a100]"
               >
                 + Add Event
               </button>
