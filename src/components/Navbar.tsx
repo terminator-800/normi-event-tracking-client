@@ -36,8 +36,8 @@ export default function Navbar({ showSettings = false }: NavbarProps) {
               alt="Northern Mindanao Colleges, Inc."
               className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-contain object-center"
             />
-            <span className="text-base sm:text-lg md:text-xl font-semibold text-green-800 whitespace-nowrap font-[Inter,sans-serif]">
-              Northern Mindanao Colleges, Inc.
+            <span className="hidden sm:inline text-base sm:text-lg md:text-xl font-semibold text-green-800 whitespace-nowrap font-[Inter,sans-serif]">
+                Northern Mindanao Colleges, Inc.
             </span>
           </Link>
           {showSettings && (
