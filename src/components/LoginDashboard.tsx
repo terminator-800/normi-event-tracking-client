@@ -55,7 +55,8 @@ export default function LoginDashboard({ onLoginSuccess }: LoginDashboardProps) 
 
         <div className="relative z-10 w-full max-w-6xl bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col md:flex-row">
           {/* Left side - marketing / features */}
-          <section className="md:w-1/2 bg-[#07713c] text-white relative overflow-hidden">
+                {/* Left side - marketing / features */}
+          <section className="hidden md:block md:w-1/2 bg-[#07713c] text-white relative overflow-hidden">
             {/* Decorative circles */}
             <div className="absolute -left-10 -top-10 w-40 h-40 border border-[#055a2e] rounded-full opacity-40" />
             <div className="absolute -right-20 bottom-0 w-56 h-56 border border-[#055a2e] rounded-full opacity-40" />
@@ -69,11 +70,11 @@ export default function LoginDashboard({ onLoginSuccess }: LoginDashboardProps) 
                     Real-Time Attendance
                   </h1>
                   <p className="text-sm text-white/85">
-                    Track time in &amp; time out live for every student and
-                    staff member.
+                    Track time in &amp; time out live for every student and staff member.
                   </p>
                 </div>
               </div>
+
               <div className="space-y-6 w-full max-w-md text-left">
                 <FeatureItem
                   icon="🕒"
@@ -105,7 +106,7 @@ export default function LoginDashboard({ onLoginSuccess }: LoginDashboardProps) 
           </section>
 
           {/* Right side - login form */}
-          <section className="md:w-1/2 bg-gray-50">
+          <section className="w-full md:w-1/2 bg-gray-50">
             <div className="h-full px-8 sm:px-12 py-8 sm:py-10 flex flex-col justify-center">
               <div className="space-y-2 mb-8">
                 <p className="text-xs uppercase tracking-[0.2em] text-[#07713c]">
