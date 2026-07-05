@@ -968,7 +968,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
 
                       <div className="min-w-0 overflow-x-auto rounded-lg border border-[#07713c]/30">
                         <table className={`w-full text-sm ${TABLE_CELL_NOWRAP}`}>
-                          <thead className={`border-b border-[#07713c]/30 bg-[#ffb300] text-xs uppercase ${PAYMENTS_TH_TEXT}`}>
+                          <thead className={`border-b border-[#07713c]/30 bg-[#07713c] text-xs uppercase ${PAYMENTS_TH_TEXT}`}>
                             <tr>
                               <th className="px-4 py-2 text-left">Event</th>
                               <th className="px-4 py-2 text-center">Date</th>

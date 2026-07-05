@@ -1032,18 +1032,46 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
     <div className="flex min-h-screen bg-[#07713c]/[0.04] [&_button]:cursor-pointer">
       <aside className="sticky top-0 flex h-screen max-h-screen w-64 shrink-0 flex-col self-start overflow-y-auto bg-[#07713c] text-white [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 space-y-1 px-4">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => handleNav(item.id)}
-              className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-medium transition-colors ${
-                item.id === "events" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
+       <nav
+          className="
+            flex-1
+            space-y-1
+            px-4
+
+            /* Mobile */
+            max-[767px]:px-2
+            max-[767px]:space-y-0.5
+          "
+          >
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleNav(item.id)}
+                className={`
+                  flex w-full items-center gap-3
+                  rounded-lg
+                  px-4 py-3
+                  text-left text-sm font-medium
+                  transition-colors
+
+                  /* ==========================
+                    Mobile adjustments (<768px)
+                    ========================== */
+                  max-[767px]:gap-2
+                  max-[767px]:px-3
+                  max-[767px]:py-2
+                  max-[767px]:text-xs
+
+                  ${
+                    item.id === "events"
+                      ? "bg-[#055a2e] text-white"
+                      : "text-green-100 hover:bg-white/15"
+                  }
+                `}
+              >
               <SidebarNavIcon navId={item.id} />
-              {item.label}
+              <span className="truncate">{item.label}</span>
             </button>
           ))}
         </nav>
