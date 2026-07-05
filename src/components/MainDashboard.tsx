@@ -244,7 +244,7 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 max-w-7xl mx-auto">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <header className="bg-white border-b border-gray-200 px-2 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-[28px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
               {headerName}
@@ -283,7 +283,7 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
           </div>
         </header>
 
-        <main className="flex-1 p-6 overflow-auto bg-[#f6f8f9]">
+        <main className="flex-1 py-6 px-2 overflow-auto bg-[#f6f8f9]">
 
           {/* ── Super Admin combined stats ── */}
           {isSuperAdmin && superAdminStats && (
