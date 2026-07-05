@@ -246,7 +246,7 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
         {/* Header */}
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-[28px] font-extrabold font-[Inter,sans-serif] text-[#008000] leading-tight">
+            <h1 className="text-[28px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
               {headerName}
             </h1>
             <NavbarAcademicPeriod className="mt-1" />
