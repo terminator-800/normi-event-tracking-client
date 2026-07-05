@@ -262,7 +262,7 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
               <button
                 type="button"
                 onClick={() => setShowLogout((prev) => !prev)}
-                className="inline-flex h-11 w-11 items-center justify-center text-[#008000] rounded-lg hover:bg-green-50"
+                className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg hover:bg-green-50"
                 aria-label="Account menu"
                 aria-expanded={showLogout}
               >
