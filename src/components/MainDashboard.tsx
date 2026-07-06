@@ -242,47 +242,48 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0 max-w-7xl mx-auto">
-        {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-2 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-[28px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
-              {headerName}
-            </h1>
-            <NavbarAcademicPeriod className="mt-1" />
-          </div>
-          <div className="flex items-center gap-3">
-            {isSuperAdmin && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                Super Admin
-              </span>
-            )}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowLogout((prev) => !prev)}
-                className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg hover:bg-green-50"
-                aria-label="Account menu"
-                aria-expanded={showLogout}
-              >
-                <UserCircleIcon />
-              </button>
-              {showLogout && (
-                <div className="absolute right-0 top-full mt-1 py-1 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[120px] z-10">
+      <div className="flex-1 flex flex-col min-w-0 mx-auto">
+        <div className="border-b border-[#07713c]/30">
+            {/* Header */}
+            <header className="bg-white max-w-7xl mx-auto px-2 py-4 flex items-center justify-between">
+              <div>
+                <h1 className="text-[28px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
+                  {headerName}
+                </h1>
+                <NavbarAcademicPeriod className="mt-1" />
+              </div>
+              <div className="flex items-center gap-3">
+                {isSuperAdmin && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    Super Admin
+                  </span>
+                )}
+                <div className="relative">
                   <button
                     type="button"
-                    onClick={() => { setShowLogout(false); onLogout?.(); }}
-                    className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                    onClick={() => setShowLogout((prev) => !prev)}
+                    className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg hover:bg-green-50"
+                    aria-label="Account menu"
+                    aria-expanded={showLogout}
                   >
-                    Logout
+                    <UserCircleIcon />
                   </button>
+                  {showLogout && (
+                    <div className="absolute right-0 top-full mt-1 py-1 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[120px] z-10">
+                      <button
+                        type="button"
+                        onClick={() => { setShowLogout(false); onLogout?.(); }}
+                        className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                      >
+                        Logout
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          </div>
-        </header>
-
+              </div>
+            </header>
+        </div>
         <main className="flex-1 py-6 px-2 overflow-auto bg-[#f6f8f9]">
 
           {/* ── Super Admin combined stats ── */}
