@@ -202,7 +202,7 @@ export default function ExportSecurityPage({ onNavigate, onLogout }: DeskPagePro
         </header>
 
         <main className="flex-1 overflow-auto p-6 bg-[#f6f8f9]">
-          <div className="mx-auto w-full max-w-4xl space-y-5">
+          <div className="mx-auto w-full max-w-7xl space-y-5">
 
             {/* Info banner */}
             <div className="rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 flex items-start gap-3">
