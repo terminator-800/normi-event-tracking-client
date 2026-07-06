@@ -284,7 +284,7 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
               </div>
             </header>
         </div>
-        <main className="flex-1 py-6 px-2 overflow-auto bg-[#f6f8f9]">
+        <main className="flex-1 py-6 px-2 max-w-7xl mx-auto overflow-auto bg-[#f6f8f9]">
 
           {/* ── Super Admin combined stats ── */}
           {isSuperAdmin && superAdminStats && (
