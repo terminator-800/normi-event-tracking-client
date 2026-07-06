@@ -170,12 +170,11 @@ export default function ExportSecurityPage({ onNavigate, onLogout }: DeskPagePro
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
-          <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-4">
+          <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3">
             <div>
-              <h1 className="text-[26px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
+              <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">
                 Export Security Settings
               </h1>
-              <p className="text-sm text-[#36454F]/60 mt-0.5">Manage System Export Password for protected event file exports</p>
               <NavbarAcademicPeriod className="mt-1" />
             </div>
             <div className="relative">
