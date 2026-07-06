@@ -191,7 +191,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                   <button
                     type="button"
                     onClick={() => setCreateOpen(true)}
-                    className="rounded-lg border bg-[#07713c] px-4 py-2 text-xs font-semibold text-white hover:bg-[#e6a100]"
+                    className="rounded-lg border bg-[#07713c] px-4 py-2 text-xs font-semibold text-white"
                   >
                     + Add User
                   </button>
