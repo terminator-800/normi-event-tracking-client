@@ -66,7 +66,7 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
+        <header className="bg-white border-b border-[#07713c]/30 px-6 py-4">
           <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
             <div>
               <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">Students</h1>
