@@ -112,7 +112,7 @@ export default function AdminManagementPage(props: DeskPageProps) {
         <button
           type="button"
           onClick={() => setCreateOpen(true)}
-          className="rounded-lg border border-[#e6a100] bg-[#ffb300] px-4 py-2 text-xs font-semibold text-black hover:bg-[#e6a100]"
+          className="rounded-lg border bg-[#07713C] px-4 py-2 text-xs font-semibold text-white"
         >
           + Add User
         </button>
