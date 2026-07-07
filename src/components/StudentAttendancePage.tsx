@@ -84,7 +84,7 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
                 <button
                   type="button"
                   onClick={() => setShowLogout((prev) => !prev)}
-                  className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg hover:bg-green-50"
+                  className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg"
                   aria-label="Account menu"
                   aria-expanded={showLogout}
                   aria-haspopup="true"
