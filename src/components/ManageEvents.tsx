@@ -716,7 +716,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                 <button
                   type="button"
                   onClick={() => setShowLogout((prev) => !prev)}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#07713c] hover:bg-[#07713c]/10"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#07713c]"
                   aria-label="Account menu"
                   aria-expanded={showLogout}
                   aria-haspopup="true"
