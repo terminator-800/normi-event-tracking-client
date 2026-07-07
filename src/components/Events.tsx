@@ -1111,7 +1111,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
                 <button
                   type="button"
                   onClick={() => setShowLogout((p) => !p)}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#07713c] hover:bg-[#07713c]/10"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#07713c]"
                   aria-label="Account menu"
                 >
                   <UserCircleIcon />
