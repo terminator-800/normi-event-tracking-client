@@ -62,7 +62,7 @@ export default function AuditLogsPage(props: DeskPageProps) {
           type="button"
           onClick={() => refetch()}
           disabled={isFetching}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-[#36454F] hover:bg-gray-50 disabled:opacity-60"
+          className="rounded-lg border bg-[#07713c] px-3 py-2 text-xs font-medium text-white disabled:opacity-60"
         >
           {isFetching ? "Refreshing..." : "Refresh"}
         </button>
