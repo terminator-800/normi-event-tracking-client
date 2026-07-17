@@ -9,6 +9,7 @@ export const ACTIVE_ACADEMIC_PERIOD_QUERY_KEY = ["academic-periods", "active"];
 type CreateAcademicPeriodPayload = {
   schoolYear: string;
   semester: string;
+  autoCreateSecondSemester?: boolean;
   label?: string;
   startsOn?: string;
   endsOn?: string;

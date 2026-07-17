@@ -34,7 +34,7 @@ type PeriodForm = {
 
 const emptyForm = (): PeriodForm => ({
   schoolYear: "",
-  semester: "2nd sem",
+  semester: "1st sem",
 });
 
 function statusBadgeClass(status: AcademicPeriodRecord["status"]): string {

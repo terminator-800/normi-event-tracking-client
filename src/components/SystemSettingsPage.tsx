@@ -9,12 +9,6 @@ import {
 import { getApiErrorMessage, type AcademicPeriodRecord } from "../types/api";
 import type { DeskPageProps } from "../types/desk-pages";
 
-const SEMESTER_OPTIONS = [
-  { value: "1st sem", label: "1st Semester" },
-  { value: "2nd sem", label: "2nd Semester" },
-  { value: "summer", label: "Summer" },
-] as const;
-
 function statusBadge(status: AcademicPeriodRecord["status"]) {
   if (status === "active") return <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-800 ring-1 ring-green-200">Active</span>;
   if (status === "archived") return <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-semibold text-gray-600">Archived</span>;
@@ -29,7 +23,6 @@ function formatDate(value: string | null | undefined): string {
 
 export default function SystemSettingsPage(props: DeskPageProps) {
   const [schoolYear, setSchoolYear] = useState("");
-  const [semester, setSemester] = useState<"1st sem" | "2nd sem" | "summer">("1st sem");
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
 
@@ -44,10 +37,17 @@ export default function SystemSettingsPage(props: DeskPageProps) {
     setFormSuccess("");
     if (!schoolYear.trim()) { setFormError("School year is required."); return; }
     createPeriod.mutate(
-      { schoolYear: schoolYear.trim(), semester },
       {
-        onSuccess: () => { setFormSuccess("Academic period created."); setSchoolYear(""); },
-        onError: (err) => setFormError(getApiErrorMessage(err, "Failed to create period.")),
+        schoolYear: schoolYear.trim(),
+        semester: "1st sem",
+        autoCreateSecondSemester: true,
+      },
+      {
+        onSuccess: () => {
+          setFormSuccess("First and second semester periods created.");
+          setSchoolYear("");
+        },
+        onError: (err) => setFormError(getApiErrorMessage(err, "Failed to create school year.")),
       },
     );
   };
@@ -79,7 +79,7 @@ export default function SystemSettingsPage(props: DeskPageProps) {
         {/* Create period form */}
         <div className="lg:col-span-1">
           <div className="rounded-xl border border-[#07713c]/25 bg-white p-5 shadow-sm">
-            <h2 className="text-base font-bold text-[#36454F] mb-4">Create Academic Period</h2>
+            <h2 className="text-base font-bold text-[#36454F] mb-4">Create School Year</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-[#36454F]/70 mb-1">School Year</label>
@@ -91,18 +91,10 @@ export default function SystemSettingsPage(props: DeskPageProps) {
                   className="w-full rounded-lg border border-[#07713c]/40 bg-white px-3 py-2.5 text-sm focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-[#36454F]/70 mb-1">Semester</label>
-                <select
-                  value={semester}
-                  onChange={(e) => setSemester(e.target.value as typeof semester)}
-                  className="w-full rounded-lg border border-[#07713c]/40 bg-white px-3 py-2.5 text-sm focus:border-[#07713c] focus:outline-none"
-                >
-                  {SEMESTER_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
+              <p className="rounded-lg bg-green-50 px-3 py-2 text-xs leading-relaxed text-[#055a2e]">
+                This automatically creates draft records for the 1st and 2nd Semester.
+                Activate the 1st Semester when the school year begins.
+              </p>
               {formError && <p className="text-xs text-red-600">{formError}</p>}
               {formSuccess && <p className="text-xs text-green-700">{formSuccess}</p>}
               <button
@@ -110,7 +102,7 @@ export default function SystemSettingsPage(props: DeskPageProps) {
                 disabled={createPeriod.isPending}
                 className="w-full rounded-lg bg-[#07713c] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#055a2e] disabled:opacity-60"
               >
-                {createPeriod.isPending ? "Creating..." : "Create Period"}
+                {createPeriod.isPending ? "Creating..." : "Create School Year"}
               </button>
             </form>
           </div>
