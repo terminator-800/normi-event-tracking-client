@@ -407,7 +407,11 @@ export default function Home() {
                   className="h-20 w-20 object-contain"
                 />
               </div>
-              <p className="text-2xl font-bold text-gray-900">No ongoing event</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {upcomingEvents.length > 0
+                  ? "There is an upcoming event(s)."
+                  : "No upcoming event"}
+              </p>
               <p className="mt-2 text-base text-gray-700">There is no live event right now. Please check back later.</p>
               {upcomingEvent && (
                 <p className="mt-3 text-sm font-medium text-[#07713c]">
