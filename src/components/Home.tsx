@@ -484,7 +484,7 @@ export default function Home() {
                 )}
               </div>
               <div className="flex flex-col gap-2">
-                <div className="hidden rounded-lg border border-[#07713c]/25 bg-[#f1faf4] p-2.5">
+                <div className="rounded-lg border border-[#07713c]/25 bg-[#f1faf4] p-2.5">
                   <div className="flex flex-wrap items-center gap-3">
                     <label className="inline-flex items-center gap-2 text-xs font-medium text-[#07713c]">
                       <input

@@ -1135,7 +1135,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
           </div>
         </header>
 
-        <main className={`flex-1 overflow-auto p-6 ${ATTENDANCE_TEXT} [&_th]:font-bold [&_th]:text-white`}>
+        <main className={`flex-1 overflow-auto p-6 ${ATTENDANCE_TEXT} [&_th]:font-bold`}>
           <div className="mx-auto w-full min-w-0 max-w-7xl space-y-6">
           {isPageError && (
             <div
@@ -1693,7 +1693,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
             <div className="min-w-0 overflow-x-auto">
               <table className={`w-full text-sm ${TABLE_CELL_NOWRAP}`}>
                 <thead
-                 className={`border-b text-white border-[#07713c]/30 bg-[#07713c] text-left text-xs uppercase tracking-wide ${ATTENDANCE_TH_TEXT}`}>
+                  className="border-b border-[#07713c]/30 bg-[#07713c] text-left text-xs font-bold uppercase tracking-wide text-white">
                   <tr>
                     <th className="px-4 py-2.5 align-middle">Event name</th>
                     <th className="px-4 py-2.5 align-middle">Date</th>
