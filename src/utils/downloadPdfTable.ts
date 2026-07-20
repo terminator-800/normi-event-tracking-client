@@ -12,6 +12,8 @@ export type DownloadPdfTableOptions = {
   body: (string | number)[][];
   /** When provided, the PDF is encrypted with this password (jsPDF encryption). */
   exportPassword?: string | null;
+  /** Defaults to landscape when there are more than 6 columns. */
+  orientation?: "portrait" | "landscape";
 };
 
 const LOGO_SIZE = 38;
@@ -46,8 +48,10 @@ export async function downloadPdfTable({
   head,
   body,
   exportPassword,
+  orientation,
 }: DownloadPdfTableOptions): Promise<void> {
-  const landscape = head.length > 6;
+  const landscape =
+    orientation === "landscape" || (orientation == null && head.length > 6);
   const encryptionOptions = exportPassword
     ? { userPassword: exportPassword, ownerPassword: exportPassword, userPermissions: ["print"] as ("print" | "modify" | "copy" | "annot-forms")[] }
     : undefined;
