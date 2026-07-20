@@ -1,16 +1,15 @@
 import { type ChangeEvent, useMemo, useRef, useState } from "react";
 import axiosApi from "../api/axiosInstance";
-import SidebarNavIcon from "./SidebarNavIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
-import UserCircleIcon from "./UserCircleIcon";
 import PaginationBar from "./PaginationBar";
-import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel, isCsgPresident } from "../utils/roles";
+import { getDashboardRoleLabel } from "../utils/roles";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { useImportStudentsCsv } from "../hooks/useImportStudentsCsv";
 import { useActiveAcademicPeriod } from "../hooks/useAcademicPeriods";
+import { useAppNavItems, useMyPermissions } from "../hooks/useMyPermissions";
 import {
   DATA_RESET_CONFIRMATION_PHRASE,
   useDataReset,
@@ -117,13 +116,15 @@ const EXISTING_STUDENTS_PAGE_SIZE = 10;
 export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
   const { role, isGovernor, governorScope } = useGovernorScope();
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
-  const normalizedRole = String(role || "").toLowerCase().trim();
-  const isAdmin = normalizedRole === "admin";
-  const isSuperAdmin = normalizedRole === "super_admin";
-  const isCsg = isCsgPresident(normalizedRole);
-  const canManage = isAdmin || isSuperAdmin;
+  const { has: hasPermission } = useMyPermissions();
+  const canImportCsv = hasPermission("action.import.csv");
+  const canResetData = hasPermission("action.import.reset");
+  const canImportEventData =
+    hasPermission("action.event.import_attendance") ||
+    hasPermission("action.attendance.import") ||
+    hasPermission("action.event.export");
 
-  // ── Excel import state (CSG President only) ──────────────────────────────
+  // ── Excel import state ────────────────────────────────────────────────────
   const xlsxInputRef = useRef<HTMLInputElement>(null);
   const [xlsxFile, setXlsxFile] = useState<File | null>(null);
   const [xlsxPreview, setXlsxPreview] = useState<null | {
@@ -135,7 +136,6 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
   const [xlsxImporting, setXlsxImporting] = useState(false);
   const [xlsxResult, setXlsxResult] = useState<null | { success: boolean; message: string; attendanceCreated: number; attendanceSkipped: number }>(null);
   const [xlsxDragging, setXlsxDragging] = useState(false);
-  const [showLogout, setShowLogout] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportMode] = useState("export");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -150,17 +150,19 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
   const [resetError, setResetError] = useState("");
   const [showNoActivePeriodModal, setShowNoActivePeriodModal] = useState(false);
   const importMutation = useImportStudentsCsv();
-  const { data: activeAcademicPeriod, isLoading: isActivePeriodLoading } = useActiveAcademicPeriod(canManage);
+  const { data: activeAcademicPeriod, isLoading: isActivePeriodLoading } = useActiveAcademicPeriod(
+    canImportCsv,
+  );
   const hasActiveAcademicPeriod = Boolean(activeAcademicPeriod?.id);
   const {
     data: resetPreview,
     refetch: refetchResetPreview,
     isFetching: isResetPreviewLoading,
-  } = useDataResetPreview({ enabled: canManage });
+  } = useDataResetPreview({ enabled: canResetData });
   const resetMutation = useDataReset();
   const resetCounts = resetPreview as DataResetPreviewCounts | undefined;
 
-  const navItems = getAppNavItems({ isAdmin: canManage, isSuperAdmin, isCsgPresident: isCsg });
+  const navItems = useAppNavItems();
 
   const handleXlsxFile = async (file: File) => {
     setXlsxFile(file);
@@ -313,58 +315,18 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate?.(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                item.id === "import" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav items={navItems} activeNavId="import" onNavigate={onNavigate} />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
-          <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
+          <div className="mx-auto w-full max-w-7xl">
             <div>
               <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
                 Import Students CSV
               </h1>
               <NavbarAcademicPeriod className="mt-1" />
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowLogout((prev) => !prev)}
-                  className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg"
-                  aria-label="Account menu"
-                >
-                  <UserCircleIcon />
-                </button>
-                {showLogout && (
-                  <div className="absolute right-0 top-full mt-1 py-1 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[100px] z-10">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowLogout(false);
-                        onLogout?.();
-                      }}
-                      className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                    >
-                      Logout
-                    </button>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </header>
@@ -372,6 +334,8 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
         <main className={`flex-1 overflow-auto p-6 ${IMPORT_PAGE_TEXT} [&_th]:font-bold [&_th]:!text-black`}>
           <div className="mx-auto w-full min-w-0 max-w-7xl space-y-6">
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+              {canImportCsv ? (
+                <>
               <p className="text-sm text-black">
                 Upload a student CSV (export from Excel as CSV UTF-8). Use the 5-column format below to link each
                 student to a college department.
@@ -425,9 +389,15 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
               </div>
               {error && <p className="text-sm text-black">{error}</p>}
               <p className="text-sm text-black/75">Role: {roleLabel}</p>
+                </>
+              ) : (
+                <p className="text-sm text-black/70">
+                  Student CSV import is not enabled for your role.
+                </p>
+              )}
             </div>
 
-            {preview.headers.length > 0 && (
+            {canImportCsv && preview.headers.length > 0 && (
               <div className="min-w-0 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                 <h3 className="text-sm text-black mb-3">CSV Preview</h3>
                 <p className="mb-3 text-sm text-black">Total students in CSV: {preview.rows.length}</p>
@@ -458,7 +428,7 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
               </div>
             )}
 
-            {canManage && (
+            {canResetData && (
               <div className="min-w-0 rounded-xl border border-red-300 bg-red-50/40 p-5 shadow-sm space-y-4">
                 <div>
                   <h3 className="text-sm font-bold text-black">Reset all data</h3>
@@ -614,7 +584,7 @@ export default function ImportPage({ onNavigate, onLogout }: DeskPageProps) {
               </div>
             )}
           {/* ── Excel Import (CSG President only) ───────────────────── */}
-          {isCsg && (
+          {canImportEventData && (
             <div className="min-w-0 rounded-xl border border-[#07713c]/30 bg-white p-5 shadow-sm space-y-4">
               <div className="flex items-center gap-2">
                 <svg className="h-5 w-5 text-[#07713c]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>

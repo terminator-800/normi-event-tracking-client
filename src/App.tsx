@@ -7,6 +7,7 @@ import Events from "./components/Events";
 import StudentAttendancePage from "./components/StudentAttendancePage";
 import ManageEvents from "./components/ManageEvents";
 import Payments from "./components/Payments";
+import PaymentStation from "./components/PaymentStation";
 import ImportPage from "./components/ImportPage";
 import UsersPage from "./components/UsersPage";
 import AcademicSettingsPage from "./components/AcademicSettingsPage";
@@ -17,8 +18,11 @@ import SystemSettingsPage from "./components/SystemSettingsPage";
 import AuditLogsPage from "./components/AuditLogsPage";
 import ReportsAnalyticsPage from "./components/ReportsAnalyticsPage";
 import ExportSecurityPage from "./components/ExportSecurityPage";
+import ReportsAttendancePage from "./components/ReportsAttendancePage";
+import ReportsCollectionPage from "./components/ReportsCollectionPage";
 import CreateUserModal from "./components/CreateUserModal";
 import { AUTH_SESSION_QUERY_KEY, useAuthSession, useLogout } from "./hooks/auth";
+import { MY_PERMISSIONS_QUERY_KEY, useMyPermissions } from "./hooks/useMyPermissions";
 import {
   APP_ROUTES,
   DEFAULT_LOGGED_IN_ROUTE,
@@ -44,6 +48,26 @@ function LegacyAttendanceEventStudentsRedirect() {
   const { eventId } = useParams();
   if (!eventId) return <Navigate to={APP_ROUTES.events} replace />;
   return <Navigate to={eventsEventStudentsPath(eventId)} replace />;
+}
+
+function RequirePermission({
+  permission,
+  fallbackRoleOk,
+  children,
+}: {
+  permission: string | string[];
+  /** Used while permissions are still loading (legacy role gate). */
+  fallbackRoleOk?: boolean;
+  children: React.ReactNode;
+}) {
+  const { has, isReady, isSuperAdmin, isSuccess } = useMyPermissions();
+  if (isSuperAdmin) return <>{children}</>;
+  if (!isReady || !isSuccess) {
+    if (fallbackRoleOk) return <>{children}</>;
+    return <Navigate to={DEFAULT_LOGGED_IN_ROUTE} replace />;
+  }
+  if (has(permission)) return <>{children}</>;
+  return <Navigate to={DEFAULT_LOGGED_IN_ROUTE} replace />;
 }
 
 function App() {
@@ -98,6 +122,7 @@ function App() {
       onSettled: () => {
         setLoginPayload(null);
         queryClient.setQueryData(AUTH_SESSION_QUERY_KEY, null);
+        queryClient.removeQueries({ queryKey: MY_PERMISSIONS_QUERY_KEY });
         navigate("/login", { replace: true });
       },
     });
@@ -130,6 +155,8 @@ function App() {
       {!isLoggedIn ? (
         <>
           <Route path="/" element={<Home />} />
+          <Route path={APP_ROUTES.live} element={<Home />} />
+          <Route path={`${APP_ROUTES.live}/:eventId`} element={<Home />} />
           <Route path="/login" element={<LoginDashboard onLoginSuccess={(data) => handleLoginSuccess(data)} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </>
@@ -138,115 +165,191 @@ function App() {
           <Route path="/login" element={<Navigate to={defaultRoute} replace />} />
           <Route path="/" element={<Navigate to={defaultRoute} replace />} />
 
-          {/* Dashboard — accessible to all logged-in desk users */}
+          {/* Public attendance landing (available while logged in) */}
+          <Route path={APP_ROUTES.live} element={<Home />} />
+          <Route path={`${APP_ROUTES.live}/:eventId`} element={<Home />} />
+
+          {/* Dashboard */}
           <Route
             path={APP_ROUTES.dashboard}
-            element={<MainDashboard {...deskProps} />}
-          />
-
-          {/* Academic Settings — Super Admin only */}
-          <Route
-            path={APP_ROUTES.academicSettings}
             element={
-              isSuperAdminUser ? (
-                <AcademicSettingsPage {...deskProps} />
-              ) : (
-                <Navigate to={defaultRoute} replace />
-              )
+              <RequirePermission permission="nav.dashboard" fallbackRoleOk>
+                <MainDashboard {...deskProps} />
+              </RequirePermission>
             }
           />
 
-          {/* Shared operational routes — all roles except require admin for import/users */}
-          <Route path={APP_ROUTES.events} element={<Events {...deskProps} />} />
-          <Route path={`${APP_ROUTES.events}/:eventId`} element={<Events {...deskProps} />} />
-          <Route path={`${APP_ROUTES.events}/:eventId/students`} element={<Events {...deskProps} />} />
-          <Route path={APP_ROUTES.students} element={<StudentAttendancePage {...deskProps} />} />
-          <Route path={APP_ROUTES.manageEvents} element={<ManageEvents {...deskProps} />} />
-          <Route path={APP_ROUTES.payments} element={<Payments {...deskProps} />} />
+          {/* Academic Settings — Super Admin / school year permission */}
+          <Route
+            path={APP_ROUTES.academicSettings}
+            element={
+              <RequirePermission
+                permission={["nav.settings.school_year", "action.academic_period.manage"]}
+                fallbackRoleOk={isSuperAdminUser}
+              >
+                <AcademicSettingsPage {...deskProps} />
+              </RequirePermission>
+            }
+          />
 
-          {/* Admin + Super Admin only */}
+          {/* Shared operational routes */}
+          <Route
+            path={APP_ROUTES.events}
+            element={
+              <RequirePermission permission="nav.manage_event.list" fallbackRoleOk>
+                <Events {...deskProps} />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path={`${APP_ROUTES.events}/:eventId`}
+            element={
+              <RequirePermission permission="nav.manage_event.list" fallbackRoleOk>
+                <Events {...deskProps} />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path={`${APP_ROUTES.events}/:eventId/students`}
+            element={
+              <RequirePermission permission="nav.manage_event.list" fallbackRoleOk>
+                <Events {...deskProps} />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path={APP_ROUTES.students}
+            element={
+              <RequirePermission permission="nav.reports.students" fallbackRoleOk>
+                <StudentAttendancePage {...deskProps} />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path={APP_ROUTES.manageEvents}
+            element={
+              <RequirePermission permission={["action.event.create", "nav.manage_event.create"]} fallbackRoleOk>
+                <ManageEvents {...deskProps} />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path={APP_ROUTES.payments}
+            element={
+              <RequirePermission permission="nav.cashier.payments" fallbackRoleOk>
+                <Payments {...deskProps} />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path={APP_ROUTES.paymentStation}
+            element={
+              <RequirePermission permission="nav.cashier.station" fallbackRoleOk>
+                <PaymentStation {...deskProps} />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path={APP_ROUTES.reportsAttendance}
+            element={
+              <RequirePermission permission="nav.reports.attendance" fallbackRoleOk>
+                <ReportsAttendancePage {...deskProps} />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path={APP_ROUTES.reportsCollection}
+            element={
+              <RequirePermission permission="nav.reports.collection" fallbackRoleOk>
+                <ReportsCollectionPage {...deskProps} />
+              </RequirePermission>
+            }
+          />
+
+          {/* Admin + Super Admin (also grantable via RBAC) */}
           <Route
             path={APP_ROUTES.import}
             element={
-              isAdminUser || isSuperAdminUser ? (
+              <RequirePermission permission="nav.import" fallbackRoleOk={isAdminUser || isSuperAdminUser}>
                 <ImportPage {...deskProps} />
-              ) : (
-                <Navigate to={defaultRoute} replace />
-              )
+              </RequirePermission>
             }
           />
           <Route
             path={APP_ROUTES.users}
             element={
-              isAdminUser || isSuperAdminUser ? (
+              <RequirePermission permission="nav.users" fallbackRoleOk={isAdminUser || isSuperAdminUser}>
                 <UsersPage {...deskProps} />
-              ) : (
-                <Navigate to={defaultRoute} replace />
-              )
+              </RequirePermission>
             }
           />
 
-          {/* CSG President exclusive routes */}
+          {/* CSG / grantable via RBAC */}
           <Route
             path={APP_ROUTES.exportSecurity}
             element={
-              isCsgUser ? (
+              <RequirePermission permission="nav.settings.export_security" fallbackRoleOk={isCsgUser}>
                 <ExportSecurityPage {...deskProps} />
-              ) : (
-                <Navigate to={defaultRoute} replace />
-              )
+              </RequirePermission>
             }
           />
 
-          {/* Super Admin exclusive routes */}
+          {/* Super Admin / grantable via RBAC */}
           <Route
             path={APP_ROUTES.adminManagement}
             element={
-              isSuperAdminUser ? (
+              <RequirePermission
+                permission={["nav.users.list", "nav.users"]}
+                fallbackRoleOk={isSuperAdminUser || isAdminUser}
+              >
                 <AdminManagementPage {...deskProps} />
-              ) : (
-                <Navigate to={defaultRoute} replace />
-              )
+              </RequirePermission>
             }
           />
           <Route
             path={APP_ROUTES.rolesPermissions}
             element={
-              isSuperAdminUser ? (
-                <RolesPermissionsPage {...deskProps} />
-              ) : (
-                <Navigate to={defaultRoute} replace />
-              )
+              <RequirePermission permission="nav.settings.role" fallbackRoleOk={isSuperAdminUser}>
+                <RolesPermissionsPage {...deskProps} view="permissions" />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path={APP_ROUTES.rolesList}
+            element={
+              <RequirePermission permission="nav.settings.role" fallbackRoleOk={isSuperAdminUser}>
+                <RolesPermissionsPage {...deskProps} view="list" />
+              </RequirePermission>
             }
           />
           <Route
             path={APP_ROUTES.systemSettings}
             element={
-              isSuperAdminUser ? (
+              <RequirePermission
+                permission={["nav.settings.school_year", "action.academic_period.manage"]}
+                fallbackRoleOk={isSuperAdminUser}
+              >
                 <SystemSettingsPage {...deskProps} />
-              ) : (
-                <Navigate to={defaultRoute} replace />
-              )
+              </RequirePermission>
             }
           />
           <Route
             path={APP_ROUTES.auditLogs}
             element={
-              isSuperAdminUser ? (
+              <RequirePermission permission="nav.settings.audit_logs" fallbackRoleOk={isSuperAdminUser}>
                 <AuditLogsPage {...deskProps} />
-              ) : (
-                <Navigate to={defaultRoute} replace />
-              )
+              </RequirePermission>
             }
           />
           <Route
             path={APP_ROUTES.reports}
             element={
-              isSuperAdminUser ? (
+              <RequirePermission
+                permission="nav.settings.reports_analytics"
+                fallbackRoleOk={isSuperAdminUser}
+              >
                 <ReportsAnalyticsPage {...deskProps} />
-              ) : (
-                <Navigate to={defaultRoute} replace />
-              )
+              </RequirePermission>
             }
           />
 

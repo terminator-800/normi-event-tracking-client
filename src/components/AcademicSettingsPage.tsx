@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
-import SidebarNavIcon from "./SidebarNavIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
-import UserCircleIcon from "./UserCircleIcon";
-import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel, getRoleFromSession, isSuperAdminRole } from "../utils/roles";
+import { useAppNavItems, useMyPermissions } from "../hooks/useMyPermissions";
+import { getRoleFromSession, isSuperAdminRole } from "../utils/roles";
 import { useAuthSession } from "../hooks/auth";
 import {
   useAcademicPeriodsList,
@@ -106,9 +105,9 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
   const { data: session } = useAuthSession();
   const role = getRoleFromSession(session);
   const isSuperAdmin = isSuperAdminRole(role);
-  const roleLabel = getDashboardRoleLabel(false, null, role);
+  const { has: hasPermission } = useMyPermissions();
+  const canManagePeriods = hasPermission("action.academic_period.manage") || isSuperAdmin;
 
-  const [showLogout, setShowLogout] = useState(false);
   const [form, setForm] = useState<PeriodForm>(emptyForm());
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showPeriodFormModal, setShowPeriodFormModal] = useState(false);
@@ -118,13 +117,15 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
   const [periodToDelete, setPeriodToDelete] = useState<AcademicPeriodRecord | null>(null);
   const [periodsPage, setPeriodsPage] = useState(1);
 
-  const { data: periods = [], isLoading, refetch } = useAcademicPeriodsList(isSuperAdmin);
+  const { data: periods = [], isLoading, refetch } = useAcademicPeriodsList(
+    isSuperAdmin || hasPermission("nav.settings.school_year") || canManagePeriods,
+  );
   const createMutation = useCreateAcademicPeriod();
   const updateMutation = useUpdateAcademicPeriod();
   const activateMutation = useActivateAcademicPeriod();
   const deleteMutation = useDeleteAcademicPeriod();
 
-  const navItems = getAppNavItems({ isAdmin: true, isSuperAdmin: true });
+  const navItems = useAppNavItems();
 
   const sortedPeriods = useMemo(
     () =>
@@ -276,27 +277,13 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate?.(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-base font-medium transition-colors ${
-                item.id === "academic_settings" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav items={navItems} activeNavId="academic_settings" onNavigate={onNavigate} />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="bg-white border-b border-gray-200 px-6 py-4">
-          <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4">
+          <div className="mx-auto w-full max-w-6xl">
             <div>
               <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
                 Academic Settings
@@ -304,28 +291,6 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
               <p className={`text-base ${PAGE_TEXT}/70`}>
                 Configure school year and semester, then activate one period for the whole system.
               </p>
-            </div>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowLogout((prev) => !prev)}
-                className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg hover:bg-green-50"
-                aria-label="Account menu"
-              >
-                <UserCircleIcon className="h-9 w-9" />
-              </button>
-              {showLogout ? (
-                <div className="absolute right-0 mt-2 w-52 rounded-lg border border-gray-200 bg-white py-2 shadow-lg z-20">
-                  <p className="px-4 py-1 text-sm text-gray-500">{roleLabel}</p>
-                  <button
-                    type="button"
-                    onClick={() => onLogout?.()}
-                    className="w-full px-4 py-2 text-left text-base text-red-600 hover:bg-red-50"
-                  >
-                    Log out
-                  </button>
-                </div>
-              ) : null}
             </div>
           </div>
         </header>
@@ -351,6 +316,7 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
                     Only one period can be active at a time for the entire system.
                   </p>
                 </div>
+                {canManagePeriods ? (
                 <button
                   type="button"
                   onClick={openCreateModal}
@@ -358,6 +324,7 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
                 >
                   + Create academic period
                 </button>
+                ) : null}
               </div>
 
               {isLoading ? (
@@ -368,6 +335,7 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
                   <p className={`mt-1 text-base ${PAGE_TEXT}/70`}>
                     Create a draft, then activate it for admin and governors to use the system.
                   </p>
+                  {canManagePeriods ? (
                   <button
                     type="button"
                     onClick={openCreateModal}
@@ -375,6 +343,7 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
                   >
                     Create your first period
                   </button>
+                  ) : null}
                 </div>
               ) : (
                 <>
@@ -426,7 +395,7 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
                         </dl>
 
                         <div className="mt-auto flex flex-wrap gap-2 pt-5">
-                          {period.status !== "active" ? (
+                          {canManagePeriods && period.status !== "active" ? (
                             <button
                               type="button"
                               onClick={() => handleActivate(period)}
@@ -436,7 +405,7 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
                               Activate
                             </button>
                           ) : null}
-                          {period.status === "draft" ? (
+                          {canManagePeriods && period.status === "draft" ? (
                             <button
                               type="button"
                               onClick={() => openEditModal(period)}
@@ -445,7 +414,7 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
                               Edit
                             </button>
                           ) : null}
-                          {canDeletePeriod(period) ? (
+                          {canManagePeriods && canDeletePeriod(period) ? (
                             <button
                               type="button"
                               onClick={() => handleDelete(period)}
@@ -532,7 +501,8 @@ export default function AcademicSettingsPage({ onNavigate, onLogout }: DeskPageP
                 {periodToDelete.status === "archived" ? " (archived)" : " (draft)"}.
               </p>
               <p className="text-black/80">
-                This cannot be undone. Periods with linked student enrollments or events cannot be deleted.
+                This cannot be undone. All enrollments, events, attendance, fines, and payments linked to
+                this period will also be permanently deleted.
               </p>
               <div className="flex justify-end gap-2">
                 <button

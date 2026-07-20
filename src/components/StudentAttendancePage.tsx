@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import SidebarNavIcon from "./SidebarNavIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
-import UserCircleIcon from "./UserCircleIcon";
 import SidebarUserFullName from "./SidebarUserFullName";
 import { useGovernorScope } from "../hooks/useGovernorScope";
-import { getAppNavItems, resolveNavRoute } from "../utils/appNav";
+import { useAppNavItems, useMyPermissions } from "../hooks/useMyPermissions";
+import { resolveNavRoute } from "../utils/appNav";
 import { getDashboardRoleLabel } from "../utils/roles";
 import type { DeskPageProps } from "../types/desk-pages";
 import StudentAttendanceDashboard from "./StudentAttendanceDashboard";
@@ -17,19 +17,17 @@ const STUDENTS_PAGE_TEXT = "text-black";
 /** Shell for the Students (per-student attendance) view at `/students`. */
 export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPageProps) {
   const navigate = useNavigate();
-  const [showLogout, setShowLogout] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportMode] = useState("export");
   const [openStudentsExport, setOpenStudentsExport] = useState<(() => void) | null>(null);
 
   const { role, isGovernor, governorScope } = useGovernorScope();
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
-  const normalizedRole = String(role || "").toLowerCase().trim();
-  const isAdmin = normalizedRole === "admin";
-  const isSuperAdmin = normalizedRole === "super_admin";
-  const isCsg = normalizedRole === "csg_president";
+  const { has: hasPermission } = useMyPermissions();
+  const canExportStudents =
+    hasPermission("action.students.export") || hasPermission("action.students.print");
 
-  const navItems = getAppNavItems({ isAdmin: isAdmin || isSuperAdmin, isSuperAdmin, isCsgPresident: isCsg });
+  const navItems = useAppNavItems();
 
 
   const handleNav = (itemId: string) => {
@@ -41,28 +39,12 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
     onNavigate?.(itemId);
   };
 
-  const navActive = (itemId: string) => itemId === "students";
-
   return (
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => handleNav(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                navActive(item.id) ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav items={navItems} activeNavId="students" onNavigate={handleNav} />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -72,7 +54,7 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
               <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">Students</h1>
               <NavbarAcademicPeriod className="mt-1" />
             </div>
-            <div className="flex items-center gap-4">
+            {canExportStudents ? (
               <button
                 type="button"
                 onClick={() => openStudentsExport?.()}
@@ -80,33 +62,7 @@ export default function StudentAttendancePage({ onLogout, onNavigate }: DeskPage
               >
                 Export / Reports
               </button>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowLogout((prev) => !prev)}
-                  className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg"
-                  aria-label="Account menu"
-                  aria-expanded={showLogout}
-                  aria-haspopup="true"
-                >
-                  <UserCircleIcon />
-                </button>
-                {showLogout && (
-                  <div className="absolute right-0 top-full mt-1 py-1 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[100px] z-10">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowLogout(false);
-                        onLogout?.();
-                      }}
-                      className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                    >
-                      Logout
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
+            ) : null}
           </div>
         </header>
 

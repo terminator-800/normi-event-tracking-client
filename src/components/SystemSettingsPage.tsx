@@ -6,6 +6,7 @@ import {
   useCreateAcademicPeriod,
   useDeleteAcademicPeriod,
 } from "../hooks/useAcademicPeriods";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { getApiErrorMessage, type AcademicPeriodRecord } from "../types/api";
 import type { DeskPageProps } from "../types/desk-pages";
 
@@ -25,6 +26,8 @@ export default function SystemSettingsPage(props: DeskPageProps) {
   const [schoolYear, setSchoolYear] = useState("");
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
+  const { has: hasPermission, isSuperAdmin } = useMyPermissions();
+  const canManagePeriods = hasPermission("action.academic_period.manage") || isSuperAdmin;
 
   const { data: periods = [], isLoading } = useAcademicPeriodsList();
   const createPeriod = useCreateAcademicPeriod();
@@ -60,7 +63,13 @@ export default function SystemSettingsPage(props: DeskPageProps) {
   };
 
   const handleDelete = (id: number) => {
-    if (!window.confirm("Delete this draft/archived period? This cannot be undone.")) return;
+    if (
+      !window.confirm(
+        "Delete this draft/archived period? Enrollments, events, attendance, fines, and payments for this period will also be permanently deleted.",
+      )
+    ) {
+      return;
+    }
     deletePeriod.mutate(id, {
       onError: (err) => alert(getApiErrorMessage(err, "Failed to delete.")),
     });
@@ -72,12 +81,13 @@ export default function SystemSettingsPage(props: DeskPageProps) {
     <SuperAdminShell
       {...props}
       activeNavId="system_settings"
-      pageTitle="System Settings"
-      pageSubtitle="Manage academic periods and system configuration"
+      pageTitle="School Year"
+      pageSubtitle="Manage school year and semester periods"
     >
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Create period form */}
         <div className="lg:col-span-1">
+          {canManagePeriods ? (
           <div className="rounded-xl border border-[#07713c]/25 bg-white p-5 shadow-sm">
             <h2 className="text-base font-bold text-[#36454F] mb-4">Create School Year</h2>
             <form onSubmit={handleCreate} className="space-y-4">
@@ -106,6 +116,7 @@ export default function SystemSettingsPage(props: DeskPageProps) {
               </button>
             </form>
           </div>
+          ) : null}
 
           {/* System info panel */}
           <div className="mt-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -154,7 +165,7 @@ export default function SystemSettingsPage(props: DeskPageProps) {
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {period.status !== "active" && (
+                      {canManagePeriods && period.status !== "active" && (
                         <button
                           type="button"
                           onClick={() => handleActivate(period.id)}
@@ -164,7 +175,7 @@ export default function SystemSettingsPage(props: DeskPageProps) {
                           Activate
                         </button>
                       )}
-                      {(period.status === "draft" || period.status === "archived") && (
+                      {canManagePeriods && (period.status === "draft" || period.status === "archived") && (
                         <button
                           type="button"
                           onClick={() => handleDelete(period.id)}

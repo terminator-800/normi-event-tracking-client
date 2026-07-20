@@ -5,15 +5,15 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
-import SidebarNavIcon from "./SidebarNavIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import SidebarBrand from "./SidebarBrand";
-import UserCircleIcon from "./UserCircleIcon";
 import SidebarUserFullName from "./SidebarUserFullName";
 import {
   APP_ROUTES,
+  eventsEventPath,
   eventsEventStudentsPath,
-  getAppNavItems,
 } from "../utils/appNav";
+import { useAppNavItems, useMyPermissions } from "../hooks/useMyPermissions";
 import { getDashboardRoleLabel } from "../utils/roles";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { useAttendancePageEvents } from "../hooks/useAttendancePageEvents";
@@ -24,7 +24,6 @@ import { formatGraceDurationLabel } from "../utils/eventTimeOptions";
 import { getAudienceScopeLabel } from "../utils/eventAudienceLabel";
 import { downloadPdfTable } from "../utils/downloadPdfTable";
 import { fetchExportKey } from "../hooks/useExportSecurity";
-import { isCsgPresident } from "../utils/roles";
 import axiosApi from "../api/axiosInstance";
 import type {
   AttendanceEvent,
@@ -261,14 +260,14 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
   const { eventId } = useParams();
   const { role, isGovernor, governorScope } = useGovernorScope();
   void getDashboardRoleLabel(isGovernor, governorScope, role);
-  const normalizedRole = String(role || "").toLowerCase().trim();
-  const isAdmin = normalizedRole === "admin";
-  const isSuperAdmin = normalizedRole === "super_admin";
-  const isCsg = isCsgPresident(normalizedRole);
+  const { has: hasPermission } = useMyPermissions();
+  const canImportEvent =
+    hasPermission("action.event.import_config") ||
+    hasPermission("action.event.import_attendance") ||
+    hasPermission("action.event.export");
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [showLogout, setShowLogout] = useState(false);
   const [detailEventId, setDetailEventId] = useState<string | null>(null);
 
   const {
@@ -356,13 +355,6 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
   useEffect(() => {
     setDetailEventId(eventId || null);
   }, [eventId]);
-
-  useEffect(() => {
-    if (!eventId) return;
-    if (!location.pathname.endsWith("/students")) {
-      navigate(eventsEventStudentsPath(eventId), { replace: true });
-    }
-  }, [eventId, location.pathname, navigate]);
 
   useEffect(() => {
     setSelectedStudentId(null);
@@ -787,7 +779,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
     }
   }, [exportAllEventId, exportCompletedEventOptions]);
 
-  const navItems = getAppNavItems({ isAdmin: isAdmin || isSuperAdmin, isSuperAdmin, isCsgPresident: isCsg });
+  const navItems = useAppNavItems();
 
 
   const handleNav = (itemId: string) => {
@@ -796,11 +788,12 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
 
   const openEventDetails = (id: string | number | null | undefined) => {
     if (!id) return;
-    navigate(eventsEventStudentsPath(id));
+    navigate(eventsEventPath(id));
   };
 
   const openEventStudents = (id: string | number | null | undefined) => {
-    openEventDetails(id);
+    if (!id) return;
+    navigate(eventsEventStudentsPath(id));
   };
 
   const closeEventDetails = () => {
@@ -1032,50 +1025,25 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
     <div className="flex min-h-screen bg-[#07713c]/[0.04] [&_button]:cursor-pointer">
       <aside className="sticky top-0 flex h-screen max-h-screen w-64 shrink-0 flex-col self-start overflow-y-auto bg-[#07713c] text-white [&_p]:text-white">
         <SidebarBrand />
-       <nav
+       <AppSidebarNav
+          items={navItems}
+          activeNavId="events"
+          onNavigate={handleNav}
           className="
             flex-1
             space-y-1
             px-4
-
-            /* Mobile */
             max-[767px]:px-2
             max-[767px]:space-y-0.5
           "
-          >
-            {navItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => handleNav(item.id)}
-                className={`
-                  flex w-full items-center gap-3
-                  rounded-lg
-                  px-4 py-3
-                  text-left text-sm font-medium
-                  transition-colors
-
-                  /* ==========================
-                    Mobile adjustments (<768px)
-                    ========================== */
-                  max-[767px]:gap-2
-                  max-[767px]:px-3
-                  max-[767px]:py-2
-                  max-[767px]:text-xs
-
-                  ${
-                    item.id === "events"
-                      ? "bg-[#055a2e] text-white"
-                      : "text-green-100 hover:bg-white/15"
-                  }
-                `}
-              >
-              <SidebarNavIcon navId={item.id} />
-              <span className="truncate">{item.label}</span>
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+          itemClassName="
+            max-[767px]:gap-2
+            max-[767px]:px-3
+            max-[767px]:py-2
+            max-[767px]:text-xs
+          "
+        />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -1083,12 +1051,12 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
           <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">
-                Events
+                List Events
               </h1>
               <NavbarAcademicPeriod className="mt-1" />
             </div>
             <div className="flex items-center gap-3">
-              {isCsg && (
+              {canImportEvent && (
                 <button
                   type="button"
                   onClick={() => {
@@ -1100,37 +1068,6 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
                   Import Event
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => setExportOpen(true)}
-                className="rounded-lg border bg-[#07713C] px-3 py-2 text-sm font-medium text-white"
-              >
-                Export / Reports
-              </button>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowLogout((p) => !p)}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#07713c]"
-                  aria-label="Account menu"
-                >
-                  <UserCircleIcon />
-                </button>
-                {showLogout && (
-                  <div className="absolute right-0 top-full z-10 mt-1 min-w-[100px] rounded-lg border border-[#07713c]/30 bg-white py-1 shadow-lg">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowLogout(false);
-                        onLogout?.();
-                      }}
-                      className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                    >
-                      Logout
-                    </button>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </header>
@@ -1232,22 +1169,6 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
                         </p>
                       </div>
                     )}
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2 border-t border-[#07713c]/20 pt-4">
-                    <button
-                      type="button"
-                      onClick={() => downloadExcelEvent(detailEvent)}
-                      className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
-                    >
-                      Export Excel (CSV) — this event
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => exportPdfEvent(detailEvent)}
-                      className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
-                    >
-                      Export PDF — this event
-                    </button>
                   </div>
                 </div>
               </div>
@@ -1593,20 +1514,6 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
                     >
                       Students list
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => downloadExcelEvent(detailEvent)}
-                      className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
-                    >
-                      Export Excel (CSV) — this event
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => exportPdfEvent(detailEvent)}
-                      className="rounded-lg border border-[#07713c] bg-[#07713c]/10 px-3 py-2 text-sm font-medium text-black hover:bg-[#07713c]/15"
-                    >
-                      Export PDF — this event
-                    </button>
                   </div>
                 </div>
               </div>
@@ -1945,25 +1852,6 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
               >
                 Students list
               </button>
-              <button
-                type="button"
-                onClick={() => downloadExcelEvent(detailEvent!)}
-                className="rounded-lg border border-[#07713c]/40 bg-white px-3 py-2 text-sm font-medium hover:bg-[#07713c]/10"
-              >
-                Export Excel (CSV) — this event
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  exportPdfEvent(
-                    detailEvent!,
-                    isStudentListPath ? filteredStudentList : detailEvent!.students,
-                  )
-                }
-                className="rounded-lg border border-[#07713c]/40 bg-white px-3 py-2 text-sm font-medium hover:bg-[#07713c]/10"
-              >
-                Export PDF — this event
-              </button>
             </div>
           </div>
         </div>
@@ -1971,7 +1859,7 @@ export default function Events({ onLogout, onNavigate }: EventsPageProps) {
 
       {/* Export panel */}
       {/* ── Import Event Modal (CSG President only) ─────────────────────── */}
-      {importOpen && isCsg && (
+      {importOpen && canImportEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
             {/* Header */}
