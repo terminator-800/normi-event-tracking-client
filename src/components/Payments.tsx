@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import SidebarNavIcon from "./SidebarNavIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
-import UserCircleIcon from "./UserCircleIcon";
 import SidebarUserFullName from "./SidebarUserFullName";
 import PaginationBar from "./PaginationBar";
-import { useGovernorScope } from "../hooks/useGovernorScope";
-import { getDashboardRoleLabel, getFullNameFromSession, getNavDisplayNameFromSession, isCsgPresident } from "../utils/roles";
+import { getFullNameFromSession, getNavDisplayNameFromSession } from "../utils/roles";
 import { useAuthSession } from "../hooks/auth";
 import { formatEventDateForDisplay } from "../hooks/useGetEvents";
 import { lookupPaymentStudent, useGetPaymentStudent, useGetPaymentSummary, useGetPayments, useGetPaymentTransactions } from "../hooks/useGetPayments";
 import { useRecordPayment } from "../hooks/useRecordPayment";
-import { getAppNavItems } from "../utils/appNav";
+import { useAppNavItems, useMyPermissions } from "../hooks/useMyPermissions";
 import { formatCourseWithMajor } from "../utils/courseMajorDisplay";
 import { downloadPdfTable } from "../utils/downloadPdfTable";
 import csgLogo from "../assets/CSG LOGO.jpg";
@@ -154,12 +152,40 @@ function downloadTextFile(filename: string, text: string, mime = "text/csv;chars
   URL.revokeObjectURL(url);
 }
 
+function escapeHtml(value: string | number | null | undefined): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function resolveReceiptLogoUrl(): string {
+  const imported = String(csgLogo);
+  if (imported.startsWith("http")) return imported;
+  if (imported.startsWith("/")) return `${window.location.origin}${imported}`;
+  try {
+    return new URL(imported, window.location.origin).href;
+  } catch {
+    return `${window.location.origin}/csg.jpg`;
+  }
+}
+
 function buildReceiptHtml(receipt: PaymentReceipt, logoUrl: string): string {
+  const txCode = escapeHtml(receipt.transactionCode || receipt.receiptNo);
+  const date = escapeHtml(formatEventDateForDisplay(receipt.createdAt ?? ""));
+  const studentId = escapeHtml(receipt.studentId);
+  const studentName = escapeHtml(receipt.studentName);
+  const department = escapeHtml(receipt.department);
+  const year = escapeHtml(receipt.year);
+  const encodedBy = escapeHtml(receipt.encodedBy);
+  const note = receipt.note ? escapeHtml(receipt.note) : "";
   return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Receipt ${receipt.transactionCode || receipt.receiptNo}</title>
+    <title>Receipt ${txCode}</title>
     <style>
       body { font-family: Arial, sans-serif; margin: 0; color: #16331f; }
       .page { max-width: 760px; margin: 24px auto; border: 1px solid #d1d5db; border-radius: 12px; overflow: hidden; }
@@ -182,7 +208,7 @@ function buildReceiptHtml(receipt: PaymentReceipt, logoUrl: string): string {
   <body>
     <div class="page">
       <div class="header">
-        <img class="logo" src="${logoUrl}" alt="Central Student Government" />
+        <img class="logo" src="${escapeHtml(logoUrl)}" alt="Central Student Government" />
         <div>
           <p class="title">Payment Receipt</p>
           <p class="subtitle">CENTRAL STUDENT GOVERNMENT</p>
@@ -190,19 +216,19 @@ function buildReceiptHtml(receipt: PaymentReceipt, logoUrl: string): string {
       </div>
       <div class="content">
         <div class="grid">
-          <div><span class="label">Transaction Code:</span> <span class="value">${receipt.transactionCode || receipt.receiptNo}</span></div>
-          <div><span class="label">Date:</span> <span class="value">${formatEventDateForDisplay(receipt.createdAt ?? "")}</span></div>
-          <div><span class="label">Student ID:</span> <span class="value">${receipt.studentId}</span></div>
-          <div><span class="label">Student Name:</span> <span class="value">${receipt.studentName}</span></div>
-          <div><span class="label">Department / Year:</span> <span class="value">${receipt.department} · ${receipt.year}</span></div>
-          <div><span class="label">Encoded By:</span> <span class="value">${receipt.encodedBy}</span></div>
+          <div><span class="label">Transaction Code:</span> <span class="value">${txCode}</span></div>
+          <div><span class="label">Date:</span> <span class="value">${date}</span></div>
+          <div><span class="label">Student ID:</span> <span class="value">${studentId}</span></div>
+          <div><span class="label">Student Name:</span> <span class="value">${studentName}</span></div>
+          <div><span class="label">Department / Year:</span> <span class="value">${department} · ${year}</span></div>
+          <div><span class="label">Encoded By:</span> <span class="value">${encodedBy}</span></div>
         </div>
         <div class="summary">
           <div class="row"><span>Previous Balance</span><strong>${formatPhp(receipt.previousBalance)}</strong></div>
           <div class="row row-divider"><span>Amount Paid</span><strong>${formatPhp(receipt.amountPaid)}</strong></div>
           <div class="row new-balance"><span>New Balance</span><strong>${formatPhp(receipt.newBalance)}</strong></div>
         </div>
-        ${receipt.note ? `<div class="foot"><strong>Note:</strong> ${receipt.note}</div>` : ""}
+        ${note ? `<div class="foot"><strong>Note:</strong> ${note}</div>` : ""}
       </div>
     </div>
   </body>
@@ -240,15 +266,11 @@ type PaymentsPageProps = DeskPageProps;
 
 export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
   const { data: session } = useAuthSession();
-  const { role, isGovernor, governorScope } = useGovernorScope();
-  void getDashboardRoleLabel(isGovernor, governorScope, role);
   const encoderDisplayName =
     getFullNameFromSession(session) || getNavDisplayNameFromSession(session) || "—";
-  const normalizedRole = String(role || "").toLowerCase().trim();
-  const isAdmin = normalizedRole === "admin";
-  const isSuperAdmin = normalizedRole === "super_admin";
-  const isCsg = isCsgPresident(normalizedRole);
-  const navItems = getAppNavItems({ isAdmin: isAdmin || isSuperAdmin, isSuperAdmin, isCsgPresident: isCsg });
+  const navItems = useAppNavItems();
+  const { has: hasPermission } = useMyPermissions();
+  const canRecordPayment = hasPermission("action.payment.record");
   const { data: paymentSummary } = useGetPaymentSummary();
   const { data: paymentTransactions = [], isLoading: isTransactionsLoading, isError: isTransactionsError } =
     useGetPaymentTransactions() as {
@@ -280,8 +302,6 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
   const [exportCourseFilter, setExportCourseFilter] = useState("all");
   const [exportYearFilter, setExportYearFilter] = useState("all");
   const [exportBalanceFilter, setExportBalanceFilter] = useState("all");
-  const [showLogout, setShowLogout] = useState(false);
-
   const { data: paymentRowsFromApi = [], isLoading: isExportListLoading } = useGetPayments({
     enabled: exportOpen,
   });
@@ -517,6 +537,8 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
       return;
     }
 
+    const printWin = window.open("", "_blank", "width=900,height=900");
+
     try {
       const response = (await recordPaymentMutation.mutateAsync({
         studentId: selectedRow.studentId ?? "",
@@ -531,7 +553,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
         amountPaid?: number;
         newBalance?: number;
       };
-      setLastReceipt({
+      const savedReceipt: PaymentReceipt = {
         transactionCode: response?.transactionCode || response?.receiptNo || makeReceiptNumber(),
         receiptNo: response?.transactionCode || response?.receiptNo || makeReceiptNumber(),
         createdAt: new Date().toISOString(),
@@ -544,11 +566,14 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
         amountPaid: response?.amountPaid ?? roundedAmount,
         newBalance: response?.newBalance ?? newBalance,
         note: "",
-      });
+      };
+      setLastReceipt(savedReceipt);
       closePayStudentModal();
       setPaymentAmountInput("");
       setPaymentError("");
+      printReceipt(savedReceipt, printWin);
     } catch (error: unknown) {
+      printWin?.close();
       const message =
         typeof error === "object" &&
         error != null &&
@@ -560,18 +585,36 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
     }
   };
 
-  const printReceipt = (receipt: PaymentReceipt) => {
+  const writeReceiptToWindow = (win: Window, receipt: PaymentReceipt) => {
+    const html = buildReceiptHtml(receipt, resolveReceiptLogoUrl());
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    const triggerPrint = () => {
+      try {
+        win.print();
+      } catch {
+        /* ignore */
+      }
+    };
+    const img = win.document.querySelector("img");
+    if (img && !img.complete) {
+      img.onload = () => window.setTimeout(triggerPrint, 100);
+      img.onerror = () => window.setTimeout(triggerPrint, 100);
+    } else {
+      window.setTimeout(triggerPrint, 250);
+    }
+  };
+
+  const printReceipt = (receipt: PaymentReceipt, existingWindow?: Window | null) => {
     if (!receipt) return;
-    const logoUrl = String(csgLogo).startsWith("http")
-      ? csgLogo
-      : new URL(csgLogo, window.location.origin).href;
-    const w = window.open("", "_blank", "width=900,height=900");
-    if (!w) return;
-    w.document.open();
-    w.document.write(buildReceiptHtml(receipt, logoUrl));
-    w.document.close();
-    w.focus();
-    window.setTimeout(() => w.print(), 250);
+    const win = existingWindow ?? window.open("", "_blank", "width=900,height=900");
+    if (!win) {
+      alert("Pop-up blocked. Allow pop-ups to print the receipt.");
+      return;
+    }
+    writeReceiptToWindow(win, receipt);
   };
 
   const exportPaymentsCsv = () => {
@@ -632,66 +675,16 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate?.(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                item.id === "payment" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav items={navItems} activeNavId="payment" onNavigate={onNavigate} />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="bg-white border-b border-[#07713c]/30 px-6 py-4">
-          <div className="mx-auto flex w-full max-w-7xl items-start justify-between gap-4">
+          <div className="mx-auto w-full max-w-7xl">
             <div>
               <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">Payments</h1>
               <NavbarAcademicPeriod className="mt-1" />
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setExportOpen(true)}
-                className="rounded-lg border bg-[#07713C] px-3 py-2 text-sm font-medium text-white"
-              >
-                Export / Reports
-              </button>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowLogout((prev) => !prev)}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#07713c]"
-                  aria-label="Account menu"
-                  aria-expanded={showLogout}
-                  aria-haspopup="true"
-                  title="Profile"
-                >
-                  <UserCircleIcon />
-                </button>
-                {showLogout && (
-                  <div className="absolute right-0 top-full mt-1 min-w-[100px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowLogout(false);
-                        onLogout?.();
-                      }}
-                      className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                    >
-                      Logout
-                    </button>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </header>
@@ -776,13 +769,15 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                 <h2 className="text-lg font-bold text-black">Payment Transactions</h2>
                 <p className="text-sm text-black/75">Recorded payments only. Click a row to view details or print a receipt. Use + New Payment to post a new transaction.</p>
               </div>
-              <button
-                type="button"
-                onClick={openPayStudentModal}
-                className="rounded-lg border bg-[#07713C] px-4 py-2 text-sm font-semibold text-white"
-              >
-                + New Payment
-              </button>
+              {canRecordPayment ? (
+                <button
+                  type="button"
+                  onClick={openPayStudentModal}
+                  className="rounded-lg border bg-[#07713C] px-4 py-2 text-sm font-semibold text-white"
+                >
+                  + New Payment
+                </button>
+              ) : null}
             </div>
 
             <div className="p-4 border-b border-[#07713c]/20">
@@ -1003,6 +998,10 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
 
                       <div className="rounded-xl border border-[#07713c]/25 bg-gray-50 p-4 space-y-3">
                         <p className="text-sm font-semibold uppercase tracking-wide text-black/80">Record Payment</p>
+                        {!canRecordPayment ? (
+                          <p className="text-sm text-black/70">Your role cannot record payments.</p>
+                        ) : (
+                          <>
                         <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-black">
                           <span>Current balance</span>
                           <span className="font-semibold tabular-nums">{formatPhp(payFlowStudent.remaining)}</span>
@@ -1046,6 +1045,8 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                           <span className="font-bold tabular-nums text-[#07713c]">{formatPhp(payFlowPreviewNewBalance)}</span>
                         </div>
                         {paymentError ? <p className="text-sm font-medium text-black">{paymentError}</p> : null}
+                          </>
+                        )}
                       </div>
                     </>
                   )}
@@ -1071,7 +1072,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                     <button
                       type="button"
                       onClick={handleSubmitPayment}
-                      disabled={!payFlowStudent || payFlowStudent.remaining <= 0 || recordPaymentMutation.isPending}
+                      disabled={!canRecordPayment || !payFlowStudent || payFlowStudent.remaining <= 0 || recordPaymentMutation.isPending}
                       className="px-4 py-2 rounded-lg border border-[#07713c] bg-[#07713c] font-semibold text-white hover:bg-[#055a2e] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {recordPaymentMutation.isPending ? "Saving..." : "Save Payment"}
