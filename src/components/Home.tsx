@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
 import Navbar from "./Navbar";
 import EventCard from "./EventCard";
 import UpcomingEventsList from "./UpcomingEventsList";
@@ -15,6 +16,10 @@ import {
 } from "../utils/eventUnlockStorage";
 import { getApiErrorMessage } from "../types/api";
 import type { DisplayEvent } from "../types/events";
+import {
+  lookupPublicStudentAttendance,
+  type PublicStudentAttendanceResult,
+} from "../hooks/usePublicStudentAttendance";
 import toast from "react-hot-toast";
 
 const UPCOMING_EVENTS_PAGE_SIZE = 3;
@@ -51,6 +56,7 @@ const AUTO_SUBMIT_DEBOUNCE_MS = 500;
 const MIN_AUTO_SUBMIT_LENGTH = 6;
 
 export default function Home() {
+  const { eventId: focusEventId } = useParams();
   const [userId, setUserId] = useState("");
   const [eventPasswordInput, setEventPasswordInput] = useState("");
   const [showUnlockPassword, setShowUnlockPassword] = useState(false);
@@ -63,10 +69,14 @@ export default function Home() {
   const [showUpcomingModal, setShowUpcomingModal] = useState(false);
   const [upcomingPage, setUpcomingPage] = useState(1);
   const [ongoingPage, setOngoingPage] = useState(1);
+  const [historyIdentifier, setHistoryIdentifier] = useState("");
+  const [historyResult, setHistoryResult] = useState<PublicStudentAttendanceResult | null>(null);
+  const [historyError, setHistoryError] = useState("");
+  const [isLookingUpHistory, setIsLookingUpHistory] = useState(false);
+  const historyInputRef = useRef<HTMLInputElement>(null);
+  const historyAutoSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const historyClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [now, setNow] = useState(() => new Date());
-  const [useTestTime, setUseTestTime] = useState(false);
-  const [testTime, setTestTime] = useState("");
-  const [testDate, setTestDate] = useState("");
   const { data: eventBundle, isPending: isCurrentEventLoading } = useGetCurrentEvent();
   const currentEvent = eventBundle?.current ?? null;
   const ongoingEvents = useMemo(() => {
@@ -83,6 +93,23 @@ export default function Home() {
     if (!Array.isArray(eventBundle?.upcoming)) return null;
     return eventBundle.upcoming[0] ?? null;
   }, [eventBundle]);
+
+  /** From dashboard deep-link: focus ongoing event, or open upcoming details. */
+  useEffect(() => {
+    if (!focusEventId) return;
+    const ongoingIdx = ongoingEvents.findIndex(
+      (e) => e != null && String(e.id) === String(focusEventId),
+    );
+    if (ongoingIdx >= 0) {
+      setOngoingPage(Math.floor(ongoingIdx / ONGOING_EVENTS_PAGE_SIZE) + 1);
+      setDetailEvent(null);
+      return;
+    }
+    const upcomingMatch = upcomingEvents.find((e) => String(e.id) === String(focusEventId));
+    if (upcomingMatch) {
+      setDetailEvent(upcomingMatch);
+    }
+  }, [focusEventId, ongoingEvents, upcomingEvents]);
 
   useEffect(() => {
     if (!detailEvent) return;
@@ -113,27 +140,7 @@ export default function Home() {
     setShowUnlockPassword(false);
   }, [selectedOngoingEvent?.id]);
 
-  const displayNow = useMemo(() => {
-    if (!useTestTime || !testTime) return now;
-    const m = /^(\d{1,2}):(\d{2})$/.exec(testTime.trim());
-    if (!m) return now;
-    const hh = Number(m[1]);
-    const mm = Number(m[2]);
-    if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-      return now;
-    }
-    const trimmedDate = String(testDate ?? "").trim();
-    const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmedDate);
-    if (ymd) {
-      const y = Number(ymd[1]);
-      const mo = Number(ymd[2]);
-      const day = Number(ymd[3]);
-      return new Date(y, mo - 1, day, hh, mm, 0, 0);
-    }
-    const d = new Date(now);
-    d.setHours(hh, mm, 0, 0);
-    return d;
-  }, [useTestTime, testTime, testDate, now]);
+  const displayNow = now;
   const attendancePhase = useMemo(() => {
     if (!selectedOngoingEvent) return null;
 
@@ -171,6 +178,19 @@ export default function Home() {
         label: "Time In Not Yet Active",
         className: "text-amber-700",
         dotClassName: "bg-amber-500/80",
+      };
+    }
+
+    const timeInOnly =
+      String(selectedOngoingEvent.event_mode ?? "").trim().toUpperCase() === "TIME_IN_ONLY" ||
+      selectedOngoingEvent.time_in_only === true;
+
+    // Time-In Only: never switch the kiosk to Time Out.
+    if (timeInOnly) {
+      return {
+        label: "Time In",
+        className: "text-[#07713c]",
+        dotClassName: "bg-[#07713c]/80",
       };
     }
 
@@ -312,12 +332,6 @@ export default function Home() {
         attendanceKind,
         ...(selectedOngoingEvent?.id != null ? { eventId: selectedOngoingEvent.id } : {}),
         ...(unlockToken ? { eventUnlockToken: unlockToken } : {}),
-        ...(useTestTime && (testTime || testDate)
-          ? {
-              ...(testTime ? { simulatedTapTime: testTime } : {}),
-              simulatedDate: testDate || new Date(now).toISOString().slice(0, 10),
-            }
-          : {}),
       };
       submitAttendance(payload);
     },
@@ -326,16 +340,86 @@ export default function Home() {
       hasOngoingEvent,
       isAttendanceUnlocked,
       isSubmittingAttendance,
-      now,
       selectedOngoingEvent?.id,
       submitAttendance,
-      testDate,
-      testTime,
       unlockToken,
-      useTestTime,
       userId,
     ],
   );
+
+  const clearHistoryView = useCallback(() => {
+    if (historyClearTimerRef.current) {
+      clearTimeout(historyClearTimerRef.current);
+      historyClearTimerRef.current = null;
+    }
+    if (historyAutoSubmitTimerRef.current) {
+      clearTimeout(historyAutoSubmitTimerRef.current);
+      historyAutoSubmitTimerRef.current = null;
+    }
+    setHistoryResult(null);
+    setHistoryIdentifier("");
+    setHistoryError("");
+    window.setTimeout(() => historyInputRef.current?.focus(), 0);
+  }, []);
+
+  const lookupHistory = useCallback(async (rawIdentifier?: string) => {
+    const identifier = String(rawIdentifier ?? historyIdentifier).replace(/\D/g, "").trim();
+    if (!identifier) {
+      setHistoryError("Enter a Student ID or tap an RFID card.");
+      return;
+    }
+    if (historyAutoSubmitTimerRef.current) {
+      clearTimeout(historyAutoSubmitTimerRef.current);
+      historyAutoSubmitTimerRef.current = null;
+    }
+    if (historyClearTimerRef.current) {
+      clearTimeout(historyClearTimerRef.current);
+      historyClearTimerRef.current = null;
+    }
+    setIsLookingUpHistory(true);
+    setHistoryError("");
+    try {
+      const result = await lookupPublicStudentAttendance(identifier);
+      setHistoryResult(result);
+    } catch (error) {
+      setHistoryResult(null);
+      setHistoryError(getApiErrorMessage(error, "Student not found."));
+    } finally {
+      setIsLookingUpHistory(false);
+    }
+  }, [historyIdentifier]);
+
+  useEffect(() => {
+    if (!historyResult) return;
+    if (historyClearTimerRef.current) clearTimeout(historyClearTimerRef.current);
+    historyClearTimerRef.current = setTimeout(() => {
+      clearHistoryView();
+    }, 6000);
+    return () => {
+      if (historyClearTimerRef.current) {
+        clearTimeout(historyClearTimerRef.current);
+        historyClearTimerRef.current = null;
+      }
+    };
+  }, [historyResult, clearHistoryView]);
+
+  useEffect(() => {
+    const identifier = historyIdentifier.replace(/\D/g, "").trim();
+    if (!identifier || isLookingUpHistory || historyResult) return;
+    if (identifier.length < MIN_AUTO_SUBMIT_LENGTH) return;
+
+    if (historyAutoSubmitTimerRef.current) clearTimeout(historyAutoSubmitTimerRef.current);
+    historyAutoSubmitTimerRef.current = setTimeout(() => {
+      void lookupHistory(identifier);
+    }, AUTO_SUBMIT_DEBOUNCE_MS);
+
+    return () => {
+      if (historyAutoSubmitTimerRef.current) {
+        clearTimeout(historyAutoSubmitTimerRef.current);
+        historyAutoSubmitTimerRef.current = null;
+      }
+    };
+  }, [historyIdentifier, isLookingUpHistory, historyResult, lookupHistory]);
 
   useEffect(() => {
     if (!hasOngoingEvent || detailEvent || showUpcomingModal) return;
@@ -367,7 +451,7 @@ export default function Home() {
   return (
     <main className="relative flex min-h-screen items-center justify-center bg-[#07713c]/[0.04] px-4 py-24 sm:px-8 lg:px-12 [&_button]:cursor-pointer">
       <Navbar showSettings />
-      <section className="relative w-full max-w-xl rounded-2xl border border-white/50 bg-white/92 px-5 py-6 sm:px-8 shadow-xl backdrop-blur-[2px] text-center">
+      <section className="relative w-full max-w-6xl rounded-2xl border border-white/50 bg-white/92 px-5 py-6 sm:px-8 shadow-xl backdrop-blur-[2px] text-center">
         <div className="mt-2 px-1 sm:px-3 flex justify-center">
           {isCurrentEventLoading ? (
             <div className="w-full max-w-md rounded-lg p-6 text-center">
@@ -484,38 +568,6 @@ export default function Home() {
                 )}
               </div>
               <div className="flex flex-col gap-2">
-                <div className="rounded-lg border border-[#07713c]/25 bg-[#f1faf4] p-2.5">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label className="inline-flex items-center gap-2 text-xs font-medium text-[#07713c]">
-                      <input
-                        type="checkbox"
-                        checked={useTestTime}
-                        onChange={(e) => setUseTestTime(e.target.checked)}
-                      />
-                      Use test time
-                    </label>
-                    <input
-                      type="date"
-                      value={testDate}
-                      disabled={!useTestTime}
-                      onChange={(e) => setTestDate(e.target.value)}
-                      className="rounded-lg border border-[#07713c]/40 bg-white px-2.5 py-1.5 text-xs text-[#07713c] disabled:opacity-60"
-                    />
-                    <input
-                      type="time"
-                      value={testTime}
-                      disabled={!useTestTime}
-                      onChange={(e) => setTestTime(e.target.value)}
-                      className="rounded-lg border border-[#07713c]/40 bg-white px-2.5 py-1.5 text-xs text-[#07713c] disabled:opacity-60"
-                    />
-                    <span className="text-[11px] text-[#07713c]/80">
-                      {useTestTime && (testDate || testTime)
-                        ? `Simulated: ${testDate || "today"} ${testTime || "(current time)"}`
-                        : "Using real current time/date"}
-                      {useTestTime ? " · 00:00 = midnight (before AM window)." : ""}
-                    </span>
-                  </div>
-                </div>
                 <input
                   ref={identifierInputRef}
                   id="attendance-identifier"
@@ -552,6 +604,155 @@ export default function Home() {
           >
             View Upcoming Events
           </button>
+        </div>
+
+        <div className="mt-8 w-full rounded-2xl border border-[#07713c]/25 bg-white p-5 sm:p-6 shadow-sm">
+          <div className="mx-auto max-w-xl text-center">
+            <h2 className="text-lg font-bold text-[#0f172a]">Check my attendance</h2>
+            <p className="mt-1 text-sm text-gray-600">
+              Tap your ID card or enter your Student ID / RFID to view attendance for all events.
+            </p>
+            <div className="mt-4">
+              <input
+                ref={historyInputRef}
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                value={historyIdentifier}
+                onChange={(e) => {
+                  setHistoryIdentifier(e.target.value.replace(/\D/g, ""));
+                  if (historyError) setHistoryError("");
+                  if (historyResult) setHistoryResult(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void lookupHistory(historyIdentifier);
+                }}
+                placeholder="Student ID or RFID — loads automatically"
+                className="w-full rounded-lg border border-[#07713c]/40 bg-white px-3 py-2.5 text-center text-sm text-[#0f172a] placeholder:text-gray-400 focus:border-[#07713c] focus:outline-none focus:ring-2 focus:ring-[#07713c]/20"
+              />
+              {isLookingUpHistory ? (
+                <p className="mt-2 text-sm text-gray-500">Looking up attendance...</p>
+              ) : null}
+            </div>
+            {historyError ? (
+              <p className="mt-3 text-sm font-medium text-red-600">{historyError}</p>
+            ) : null}
+          </div>
+
+          {historyResult ? (
+            <div className="mt-5 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-[#07713c]/20 bg-[#07713c]/[0.04] p-4">
+                <div>
+                  <p className="text-sm text-gray-600">
+                    ID: {historyResult.student.studentId}
+                    {historyResult.student.yearLevel != null
+                      ? ` · Year ${historyResult.student.yearLevel}`
+                      : ""}
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-sm">
+                  <div className="rounded-lg bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-xs text-gray-500">Events</p>
+                    <p className="font-bold tabular-nums">{historyResult.summary.totalEvents}</p>
+                  </div>
+                  <div className="rounded-lg bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-xs text-gray-500">Present</p>
+                    <p className="font-bold tabular-nums text-[#07713c]">{historyResult.summary.attended}</p>
+                  </div>
+                  <div className="rounded-lg bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-xs text-gray-500">Absent</p>
+                    <p className="font-bold tabular-nums text-red-600">{historyResult.summary.missed}</p>
+                  </div>
+                  <div className="rounded-lg bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-xs text-gray-500">Total fines</p>
+                    <p className="font-bold tabular-nums text-[#0f172a]">
+                      ₱
+                      {historyResult.events
+                        .reduce((sum, ev) => sum + (Number(ev.finePhp) || 0), 0)
+                        .toLocaleString("en-PH")}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-[#07713c]/25">
+                <table className="w-full min-w-[880px] text-sm">
+                  <thead className="bg-[#07713c] text-white">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left font-semibold">Event</th>
+                      <th className="px-4 py-2.5 text-left font-semibold whitespace-nowrap">Date</th>
+                      <th className="px-4 py-2.5 text-center font-semibold whitespace-nowrap">Session</th>
+                      <th className="px-4 py-2.5 text-center font-semibold whitespace-nowrap">Status</th>
+                      <th className="px-4 py-2.5 text-left font-semibold">Time records</th>
+                      <th className="px-4 py-2.5 text-right font-semibold whitespace-nowrap min-w-[7rem]">
+                        Fine
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyResult.events.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                          No event attendance records found for this student.
+                        </td>
+                      </tr>
+                    ) : (
+                      historyResult.events.map((ev) => {
+                        const timeLabel =
+                          ev.sessionType === "Whole day"
+                            ? `AM ${ev.amTimeIn ?? "—"} / ${ev.amTimeOut ?? "—"} · PM ${ev.pmTimeIn ?? "—"} / ${ev.pmTimeOut ?? "—"}`
+                            : `In ${ev.timeIn ?? "—"} · Out ${ev.timeOut ?? "—"}`;
+                        const fine = Number(ev.finePhp) || 0;
+                        return (
+                          <tr key={ev.eventId} className="border-t border-[#07713c]/15">
+                            <td className="px-4 py-2.5 font-medium text-[#0f172a]">{ev.name}</td>
+                            <td className="px-4 py-2.5 text-[#0f172a] whitespace-nowrap">
+                              {formatEventDateForDisplay(ev.date)}
+                            </td>
+                            <td className="px-4 py-2.5 text-center text-[#0f172a] whitespace-nowrap">
+                              {ev.sessionType}
+                            </td>
+                            <td className="px-4 py-2.5 text-center">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                  ev.attended
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-red-100 text-red-700"
+                                }`}
+                              >
+                                {ev.attended ? "Present" : "Absent"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-gray-700 whitespace-nowrap">
+                              {timeLabel}
+                            </td>
+                            <td className="px-4 py-2.5 text-right tabular-nums font-semibold whitespace-nowrap text-[#0f172a]">
+                              ₱{fine.toLocaleString("en-PH")}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <p className="text-center text-xs text-gray-500">
+                Returning to landing page in a few seconds…
+              </p>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={clearHistoryView}
+                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-[#0f172a] hover:bg-gray-50"
+                >
+                  Clear now
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {ongoingEvents.length > 1 && (
