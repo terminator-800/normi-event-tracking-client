@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import AddEvent from "./AddEvent";
+import AttendanceExportModal from "./AttendanceExportModal";
+import AttendanceImportModal from "./AttendanceImportModal";
+import EventConfigExportModal from "./EventConfigExportModal";
+import EventConfigImportModal from "./EventConfigImportModal";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
-import SidebarNavIcon from "./SidebarNavIcon";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
-import UserCircleIcon from "./UserCircleIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import { useGetAllEvents } from "../hooks/useGetAllEvents";
 import { useEditEvent } from "../hooks/useEditEvent";
 import { useDeleteEvent } from "../hooks/useDeleteEvent";
-import { useGovernorScope } from "../hooks/useGovernorScope";
-import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel, isCsgPresident } from "../utils/roles";
+import { useAppNavItems, useMyPermissions } from "../hooks/useMyPermissions";
 import { formatEventDateForDisplay, formatSqlTimeForDisplay } from "../hooks/useGetEvents";
 import {
   formatDurationForEventsList,
@@ -39,7 +40,6 @@ import type { DisplayEvent } from "../types/events";
 type ManageEventsPageProps = DeskPageProps;
 type EventModalMode = "view" | "edit";
 type ViewMode = "list" | "grid";
-type ReportMode = "export" | "settings" | "import";
 type SessionKindFilter = "all" | "whole" | "am" | "pm";
 
 type EditableEvent = DisplayEvent & {
@@ -118,6 +118,11 @@ function normStatusKey(status: string | null | undefined): string {
 function isEventLockedFromEditing(status: string | null | undefined): boolean {
   const k = normStatusKey(status);
   return k === "completed" || k === "ongoing";
+}
+
+/** Completed events hide export / edit (delete stays for Super Admin). */
+function isEventCompleted(status: string | null | undefined): boolean {
+  return normStatusKey(status) === "completed";
 }
 
 /** Label shown in badges (API may still send "Active"). */
@@ -463,10 +468,6 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
     useGetAllEvents();
   const editEventMutation = useEditEvent();
   const deleteEventMutation = useDeleteEvent();
-  const { role, isGovernor, governorScope } = useGovernorScope();
-  const [showLogout, setShowLogout] = useState(false);
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportMode] = useState<ReportMode>("export");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All Status");
   const [sessionKindFilter, setSessionKindFilter] = useState<SessionKindFilter>("all");
@@ -482,14 +483,27 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
   const [showEditNotAllowedModal, setShowEditNotAllowedModal] = useState(false);
   const [editNotAllowedEventLabel, setEditNotAllowedEventLabel] = useState("");
   const [eventsPage, setEventsPage] = useState(1);
+  const [showImportConfig, setShowImportConfig] = useState(false);
+  const [showImportAttendance, setShowImportAttendance] = useState(false);
+  const [exportConfigEvent, setExportConfigEvent] = useState<DisplayEvent | null>(null);
+  const [exportAttendanceEvent, setExportAttendanceEvent] = useState<DisplayEvent | null>(null);
   const activeNav = "manage_events";
-  const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
-  const isCsgRole = isCsgPresident(role);
-  const normalizedRole = String(role || "").toLowerCase().trim();
-  const isAdmin = normalizedRole === "admin";
-  const isSuperAdmin = normalizedRole === "super_admin";
-  /** Admins and department governors can create and edit events */
-  const canManageEvents = isAdmin || isGovernor || isCsgRole;
+  const { has: hasPermission, isSuperAdmin } = useMyPermissions();
+  /** Event actions are controlled only by Role Permission checkboxes. */
+  const canCreateEvent = hasPermission("action.event.create");
+  const canEditEvent = hasPermission("action.event.edit");
+  const canDeleteEvent = hasPermission("action.event.delete");
+  const canManageEvents = canCreateEvent || canEditEvent || canDeleteEvent;
+  /** Super Admin may delete completed/ongoing events; others only non-completed. */
+  const canDeleteEventByStatus = (status: string | null | undefined) =>
+    canDeleteEvent && (isSuperAdmin || !isEventCompleted(status));
+  const canExportConfig = hasPermission("action.event.export_config") || hasPermission("action.event.export");
+  const canExportAttendance =
+    hasPermission("action.event.export_attendance") || hasPermission("action.event.export");
+  const canImportConfig =
+    hasPermission("action.event.import_config") || hasPermission("action.event.export");
+  const canImportAttendance =
+    hasPermission("action.event.import_attendance") || hasPermission("action.event.export");
   /**
    * Display amount for the Fines column — never 0 (uses {@link FINE_PER_ABSENT} as minimum).
    */
@@ -510,7 +524,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
     return FINE_PER_ABSENT;
   };
 
-  const navItems = getAppNavItems({ isAdmin: isAdmin || isSuperAdmin, isSuperAdmin, isCsgPresident: isCsgRole });
+  const navItems = useAppNavItems();
 
 
   /** Live events from API only. */
@@ -520,7 +534,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
     setEditSaveError(null);
     setSelectedEvent(ev);
     const wantEdit = mode === "edit" && !isEventLockedFromEditing(ev.status);
-    const openEdit = canManageEvents && wantEdit;
+    const openEdit = canEditEvent && wantEdit;
     setEditableEvent(() => {
       if (!openEdit) return { ...ev };
       const duration = durationNormalizedForSessionEdit(ev);
@@ -533,7 +547,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
       }
       return { ...ev, duration, fine, fineAmount: fine };
     });
-    setEventModalMode(!canManageEvents || !wantEdit ? "view" : "edit");
+    setEventModalMode(!canEditEvent || !wantEdit ? "view" : "edit");
   };
 
   const closeEventModal = () => {
@@ -544,8 +558,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
   };
 
   const handleDeleteSelectedEvent = () => {
-    if (!canManageEvents) return;
-    if (!selectedEvent) return;
+    if (!selectedEvent || !canDeleteEventByStatus(selectedEvent.status)) return;
     setDeleteError(null);
     const eventId = selectedEvent.id ?? (selectedEvent as EditableEvent)._id;
     if (eventId == null || String(eventId).trim() === "") {
@@ -569,7 +582,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
   };
 
   const saveEditableEvent = () => {
-    if (!canManageEvents) return;
+    if (!canEditEvent) return;
     if (!editableEvent) return;
     const eventId = editableEvent.id ?? editableEvent._id;
     if (eventId == null || String(eventId).trim() === "") {
@@ -582,6 +595,12 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
       date: eventYmdForDateInput(editableEvent.date),
       venue: String(editableEvent.venue ?? "").trim(),
       duration: String(editableEvent.duration ?? "Whole Day").trim(),
+      event_mode:
+        editableEvent.event_mode === "TIME_IN_ONLY" || editableEvent.time_in_only
+          ? "TIME_IN_ONLY"
+          : "TIME_IN_OUT",
+      time_in_only:
+        editableEvent.event_mode === "TIME_IN_ONLY" || editableEvent.time_in_only === true,
       am_time_in: editableEvent.am_time_in ?? null,
       am_time_out: editableEvent.am_time_out ?? null,
       pm_time_in: editableEvent.pm_time_in ?? null,
@@ -616,7 +635,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
   };
 
   const openDeleteFromRow = (ev: DisplayEvent) => {
-    if (!canManageEvents) return;
+    if (!canDeleteEventByStatus(ev.status)) return;
     setEditableEvent(null);
     setSelectedEvent(ev);
     setDeleteError(null);
@@ -625,7 +644,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
 
   const handleEditClick = (ev: DisplayEvent, e?: MouseEvent<HTMLButtonElement>) => {
     e?.stopPropagation?.();
-    if (!canManageEvents) return;
+    if (!canEditEvent) return;
     if (isEventLockedFromEditing(ev.status)) {
       const label = ev.name != null && String(ev.name).trim() !== "" ? String(ev.name).trim() : "This event";
       setEditNotAllowedEventLabel(label);
@@ -684,53 +703,22 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
       {/* Sidebar — same green as Attendance */}
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713c] text-white flex flex-col [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate && onNavigate(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                activeNav === item.id ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav
+          items={navItems}
+          activeNavId={activeNav}
+          onNavigate={onNavigate}
+        />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
-          <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3">
+          <div className="mx-auto w-full max-w-7xl">
             <div>
-              <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">Manage Event</h1>
+              <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">Create Event</h1>
               <NavbarAcademicPeriod className="mt-1" />
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="relative flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowLogout((prev) => !prev)}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#07713c]"
-                  aria-label="Account menu"
-                  aria-expanded={showLogout}
-                  aria-haspopup="true"
-                >
-                  <UserCircleIcon />
-                </button>
-                {showLogout && (
-                  <div className="absolute right-0 top-full z-10 mt-1 min-w-[100px] rounded-lg border border-[#07713c]/30 bg-white py-1 shadow-lg">
-                    <button onClick={() => { setShowLogout(false); onLogout?.(); }} className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50">
-                      Logout
-                    </button>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </header>
@@ -801,13 +789,35 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
               </button>
             </div>
             {canManageEvents && (
-              <button
-                type="button"
-                onClick={() => setShowAddEvent(true)}
-                className="rounded-lg border bg-[#07713C] px-4 py-2 text-sm font-medium text-white transition-colors"
-              >
-                + Add Event
-              </button>
+              <>
+                {canImportAttendance && (
+                  <button
+                    type="button"
+                    onClick={() => setShowImportAttendance(true)}
+                    className="rounded-lg border border-[#07713c]/40 bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#07713c]/10"
+                  >
+                    Import Attendance
+                  </button>
+                )}
+                {canImportConfig && (
+                  <button
+                    type="button"
+                    onClick={() => setShowImportConfig(true)}
+                    className="rounded-lg border border-[#07713c]/40 bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#07713c]/10"
+                  >
+                    Import Event
+                  </button>
+                )}
+                {canCreateEvent && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddEvent(true)}
+                    className="rounded-lg border bg-[#07713C] px-4 py-2 text-sm font-medium text-white transition-colors"
+                  >
+                    + Add Event
+                  </button>
+                )}
+              </>
             )}
           </div>
 
@@ -888,24 +898,61 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                                 >
                                   View
                                 </button>
-                                {canManageEvents && (
+                                {canManageEvents && !isEventCompleted(ev.status) && (
                                   <>
-                                    <button
-                                      type="button"
-                                      title="Edit event"
-                                      className="rounded-md px-2 py-1 text-xs font-medium text-black hover:bg-blue-50"
-                                      onClick={(e) => handleEditClick(ev, e)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="px-2 py-1 rounded-md text-xs font-medium text-black hover:bg-red-50"
-                                      onClick={() => openDeleteFromRow(ev)}
-                                    >
-                                      Delete
-                                    </button>
+                                    {(canExportConfig || canExportAttendance) && (
+                                      <>
+                                        {canExportConfig && (
+                                          <button
+                                            type="button"
+                                            title="Export event configuration"
+                                            className="rounded-md px-2 py-1 text-xs font-medium text-black hover:bg-[#07713c]/10"
+                                            onClick={() => setExportConfigEvent(ev)}
+                                          >
+                                            Export Event
+                                          </button>
+                                        )}
+                                        {canExportAttendance && (
+                                          <button
+                                            type="button"
+                                            title="Export attendance JSON"
+                                            className="rounded-md px-2 py-1 text-xs font-medium text-black hover:bg-[#07713c]/10"
+                                            onClick={() => setExportAttendanceEvent(ev)}
+                                          >
+                                            Export Attendance
+                                          </button>
+                                        )}
+                                      </>
+                                    )}
+                                    {canEditEvent && (
+                                      <button
+                                        type="button"
+                                        title="Edit event"
+                                        className="rounded-md px-2 py-1 text-xs font-medium text-black hover:bg-blue-50"
+                                        onClick={(e) => handleEditClick(ev, e)}
+                                      >
+                                        Edit
+                                      </button>
+                                    )}
+                                    {canDeleteEventByStatus(ev.status) && (
+                                      <button
+                                        type="button"
+                                        className="px-2 py-1 rounded-md text-xs font-medium text-black hover:bg-red-50"
+                                        onClick={() => openDeleteFromRow(ev)}
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
                                   </>
+                                )}
+                                {isEventCompleted(ev.status) && canDeleteEventByStatus(ev.status) && (
+                                  <button
+                                    type="button"
+                                    className="px-2 py-1 rounded-md text-xs font-medium text-black hover:bg-red-50"
+                                    onClick={() => openDeleteFromRow(ev)}
+                                  >
+                                    Delete
+                                  </button>
                                 )}
                               </div>
                             </td>
@@ -968,24 +1015,61 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                         >
                           View
                         </button>
-                        {canManageEvents && (
+                        {canManageEvents && !isEventCompleted(ev.status) && (
                           <>
-                            <button
-                              type="button"
-                              title="Edit event"
-                              className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-blue-100"
-                              onClick={(e) => handleEditClick(ev, e)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-red-100"
-                              onClick={() => openDeleteFromRow(ev)}
-                            >
-                              Delete
-                            </button>
+                            {(canExportConfig || canExportAttendance) && (
+                              <>
+                                {canExportConfig && (
+                                  <button
+                                    type="button"
+                                    title="Export event configuration"
+                                    className="rounded-md bg-[#07713c]/10 px-2.5 py-1 text-xs font-medium text-black hover:bg-[#07713c]/20"
+                                    onClick={() => setExportConfigEvent(ev)}
+                                  >
+                                    Export Event
+                                  </button>
+                                )}
+                                {canExportAttendance && (
+                                  <button
+                                    type="button"
+                                    title="Export attendance JSON"
+                                    className="rounded-md bg-[#07713c]/10 px-2.5 py-1 text-xs font-medium text-black hover:bg-[#07713c]/20"
+                                    onClick={() => setExportAttendanceEvent(ev)}
+                                  >
+                                    Export Attendance
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            {canEditEvent && (
+                              <button
+                                type="button"
+                                title="Edit event"
+                                className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-blue-100"
+                                onClick={(e) => handleEditClick(ev, e)}
+                              >
+                                Edit
+                              </button>
+                            )}
+                            {canDeleteEventByStatus(ev.status) && (
+                              <button
+                                type="button"
+                                className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-red-100"
+                                onClick={() => openDeleteFromRow(ev)}
+                              >
+                                Delete
+                              </button>
+                            )}
                           </>
+                        )}
+                        {isEventCompleted(ev.status) && canDeleteEventByStatus(ev.status) && (
+                          <button
+                            type="button"
+                            className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-red-100"
+                            onClick={() => openDeleteFromRow(ev)}
+                          >
+                            Delete
+                          </button>
                         )}
                       </div>
                     </div>
@@ -1008,68 +1092,6 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
       </div>
       {showAddEvent && (
         <AddEvent onBack={() => setShowAddEvent(false)} onNext={() => {}} />
-      )}
-
-      {showReportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl overflow-hidden">
-            <div className="border-b border-[#07713c]/30 bg-[#07713c]/10 px-5 py-3">
-              <h3 className="font-semibold text-black">
-                {reportMode === "settings"
-                  ? `${roleLabel} Settings`
-                  : reportMode === "import"
-                    ? "Import Data"
-                    : "Export Data"}
-              </h3>
-            </div>
-            <div className="p-5 space-y-4 text-sm">
-              <p className="text-black">
-                {reportMode === "settings"
-                  ? "Settings are not implemented yet (this is a placeholder)."
-                  : reportMode === "import"
-                    ? "Choose what you want to import."
-                    : "Choose what you want to export."}
-              </p>
-              {reportMode !== "settings" && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    className="rounded-xl border border-[#07713c]/30 p-4 text-left transition-colors hover:border-[#07713c] hover:bg-[#07713c]/10"
-                    onClick={() => setShowReportModal(false)}
-                  >
-                    <p className="font-semibold text-black">
-                      {reportMode === "import" ? "Import Attendance" : "Export Attendance"}
-                    </p>
-                    <p className="text-xs text-black/75">
-                      {reportMode === "import"
-                        ? "Import attendance records into the system."
-                        : "Download attendance records for reports."}
-                    </p>
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-xl border border-[#07713c]/30 p-4 text-left transition-colors hover:border-[#07713c] hover:bg-[#07713c]/10"
-                    onClick={() => setShowReportModal(false)}
-                  >
-                    <p className="font-semibold text-black">
-                      {reportMode === "import" ? "Import Students" : "Export Students"}
-                    </p>
-                    <p className="text-xs text-black/75">
-                      {reportMode === "import"
-                        ? "Import student records into the system."
-                        : "Download student or department records."}
-                    </p>
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="px-4 py-3 border-t border-gray-200 flex justify-end">
-              <button type="button" onClick={() => setShowReportModal(false)} className="cursor-pointer rounded-lg border border-[#07713c] bg-[#07713c]/10 px-4 py-2 text-black hover:bg-[#07713c]/15">
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Edit blocked: Completed / Ongoing */}
@@ -1247,6 +1269,45 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                 readOnly={eventModalMode === "view"}
                 onPatch={eventModalMode === "edit" ? patchEditableEventSchedule : undefined}
               />
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-black">Attendance mode</label>
+                {eventModalMode === "view" ? (
+                  <p className="rounded-lg border border-[#07713c]/30 bg-[#07713c]/5 px-3 py-2 text-sm text-black">
+                    {editableEvent.event_mode === "TIME_IN_ONLY" || editableEvent.time_in_only
+                      ? "Time-In Only"
+                      : "Time In / Time Out"}
+                  </p>
+                ) : (
+                  <label className="inline-flex items-start gap-2 text-sm text-black">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={
+                        editableEvent.event_mode === "TIME_IN_ONLY" ||
+                        editableEvent.time_in_only === true
+                      }
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setEditableEvent((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                event_mode: checked ? "TIME_IN_ONLY" : "TIME_IN_OUT",
+                                time_in_only: checked,
+                              }
+                            : prev,
+                        );
+                      }}
+                    />
+                    <span>
+                      <span className="font-medium">Time-In Only</span>
+                      <span className="mt-0.5 block text-xs text-black/70">
+                        Participants Time In once and are marked Present. Time Out is disabled.
+                      </span>
+                    </span>
+                  </label>
+                )}
+              </div>
               {eventModalMode !== "view" && (
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-black">Audience scope</label>
@@ -1296,8 +1357,36 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
               </div>
             </div>
             <div className="flex items-center justify-end border-t border-gray-200 px-4 py-3 sm:px-5">
-              <div className="flex gap-2">
-                {canManageEvents && eventModalMode === "edit" && (
+              <div className="flex flex-wrap justify-end gap-2">
+                {(canExportConfig || canExportAttendance) &&
+                  editableEvent &&
+                  !isEventCompleted(editableEvent.status) && (
+                  <>
+                    {canExportConfig && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (editableEvent) setExportConfigEvent(editableEvent);
+                        }}
+                        className="rounded-lg border border-[#07713c]/40 px-4 py-2 text-sm text-black hover:bg-[#07713c]/10"
+                      >
+                        Export Event
+                      </button>
+                    )}
+                    {canExportAttendance && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (editableEvent) setExportAttendanceEvent(editableEvent);
+                        }}
+                        className="rounded-lg border border-[#07713c]/40 px-4 py-2 text-sm text-black hover:bg-[#07713c]/10"
+                      >
+                        Export Attendance
+                      </button>
+                    )}
+                  </>
+                )}
+                {editableEvent && canDeleteEventByStatus(editableEvent.status) && (
                   <button
                     type="button"
                     onClick={() => setShowDeleteConfirm(true)}
@@ -1306,7 +1395,10 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                     Delete
                   </button>
                 )}
-                {canManageEvents && eventModalMode === "edit" && (
+                {canEditEvent &&
+                  eventModalMode === "edit" &&
+                  editableEvent &&
+                  !isEventCompleted(editableEvent.status) && (
                   <button
                     type="button"
                     onClick={saveEditableEvent}
@@ -1323,7 +1415,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
       )}
 
       {/* Delete confirm (admin or governor) */}
-      {canManageEvents && showDeleteConfirm && selectedEvent && (
+      {canDeleteEvent && showDeleteConfirm && selectedEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
             <div className="bg-red-600 px-6 py-3">
@@ -1358,6 +1450,30 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
             </div>
           </div>
         </div>
+      )}
+
+      <EventConfigImportModal
+        open={showImportConfig}
+        onClose={() => setShowImportConfig(false)}
+      />
+      <AttendanceImportModal
+        open={showImportAttendance}
+        onClose={() => setShowImportAttendance(false)}
+      />
+      {exportConfigEvent && (
+        <EventConfigExportModal
+          open={Boolean(exportConfigEvent)}
+          event={exportConfigEvent}
+          onClose={() => setExportConfigEvent(null)}
+        />
+      )}
+      {exportAttendanceEvent && (
+        <AttendanceExportModal
+          open={Boolean(exportAttendanceEvent)}
+          event={exportAttendanceEvent}
+          requireDepartmentSelect={canImportAttendance}
+          onClose={() => setExportAttendanceEvent(null)}
+        />
       )}
     </div>
   );
