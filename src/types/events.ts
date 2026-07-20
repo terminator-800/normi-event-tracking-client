@@ -6,6 +6,9 @@ export type ServerEventRaw = Record<string, unknown> & {
   status?: string;
   venue?: string;
   duration?: string;
+  event_mode?: "TIME_IN_OUT" | "TIME_IN_ONLY" | string | null;
+  time_in_only?: boolean | number | string | null;
+  timeInOnly?: boolean | number | string | null;
   icon?: string;
   audiences?: unknown;
   audience_notes?: string | null;
@@ -53,6 +56,8 @@ export type DisplayEvent = {
   icon: string;
   date: string;
   duration: string;
+  event_mode: "TIME_IN_OUT" | "TIME_IN_ONLY";
+  time_in_only: boolean;
   venue: string;
   timeSlots: string;
   year_level: string | null;

@@ -183,6 +183,19 @@ export function mapServerEventToDisplay(raw: ServerEventRaw | null | undefined):
 
   const audiences = normalizeEvAudiences(raw.audiences);
 
+  const eventModeRaw = String(raw.event_mode ?? "").trim().toUpperCase();
+  const timeInOnlyFlag =
+    eventModeRaw === "TIME_IN_ONLY" ||
+    raw.time_in_only === true ||
+    raw.time_in_only === 1 ||
+    raw.time_in_only === "1" ||
+    raw.timeInOnly === true ||
+    raw.timeInOnly === 1 ||
+    raw.timeInOnly === "1";
+  const event_mode: "TIME_IN_OUT" | "TIME_IN_ONLY" = timeInOnlyFlag
+    ? "TIME_IN_ONLY"
+    : "TIME_IN_OUT";
+
   const fineRaw = raw.fine_amount ?? raw.fineAmount ?? raw.fine;
   let fine = null;
   if (fineRaw != null && fineRaw !== "") {
@@ -203,6 +216,8 @@ export function mapServerEventToDisplay(raw: ServerEventRaw | null | undefined):
     icon: raw.icon || "📅",
     date: raw.date || "",
     duration: raw.duration || "",
+    event_mode,
+    time_in_only: event_mode === "TIME_IN_ONLY",
     venue: raw.venue || "",
     timeSlots,
     year_level: raw.year_level != null && String(raw.year_level).trim() !== "" ? String(raw.year_level).trim() : null,
