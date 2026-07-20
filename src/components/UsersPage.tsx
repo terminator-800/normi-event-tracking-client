@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import SidebarNavIcon from "./SidebarNavIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
-import UserCircleIcon from "./UserCircleIcon";
 import CreateUserModal from "./CreateUserModal";
-import { getAppNavItems } from "../utils/appNav";
+import { useAppNavItems, useMyPermissions } from "../hooks/useMyPermissions";
 import { getDashboardRoleLabel } from "../utils/roles";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { useDeleteUser, useUpdateUser, useUsersList } from "../hooks/useUsersManagement";
@@ -37,10 +36,9 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
   const { role, isGovernor, governorScope } = useGovernorScope();
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
   const normalizedRole = String(role || "").toLowerCase().trim();
-  const isAdmin = normalizedRole === "admin";
   const isSuperAdmin = normalizedRole === "super_admin";
-  const canManage = isAdmin || isSuperAdmin;
-  const [showLogout, setShowLogout] = useState(false);
+  const { has: hasPermission } = useMyPermissions();
+  const canManage = hasPermission("nav.users") || hasPermission("action.users.manage");
   const [createOpen, setCreateOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | number | null>(null);
   const [editForm, setEditForm] = useState<UserEditForm>({ fullName: "", username: "", password: "" });
@@ -51,7 +49,8 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
   const updateUserMutation = useUpdateUser();
   const deleteUserMutation = useDeleteUser();
 
-  const navItems = getAppNavItems({ isAdmin: canManage, isSuperAdmin });
+  const navItems = useAppNavItems();
+  const canMutateUsers = canManage && hasPermission("action.users.manage");
 
   const sortedUsers = useMemo(
     () => [...users].sort((a, b) => Number(a.id) - Number(b.id)),
@@ -60,7 +59,11 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
 
   const roleLabelForUsersPage = (rawRole: string | undefined) => {
     const normalized = String(rawRole || "").trim().toLowerCase();
-    if (normalized === "coc_governor") return "ccje_governor";
+    if (normalized === "governor" || normalized.endsWith("_governor")) return "Governor";
+    if (normalized === "cashier") return "Cashier";
+    if (normalized === "csg_president") return "CSG President";
+    if (normalized === "super_admin") return "Super Admin";
+    if (normalized === "admin") return "Admin";
     return rawRole;
   };
 
@@ -121,56 +124,18 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate?.(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                item.id === "users" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav items={navItems} activeNavId="users" onNavigate={onNavigate} />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
-          <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
+          <div className="mx-auto w-full max-w-7xl">
             <div>
               <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
                 User Management
               </h1>
               <NavbarAcademicPeriod className="mt-1" />
-            </div>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowLogout((prev) => !prev)}
-                className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg"
-                aria-label="Account menu"
-              >
-                <UserCircleIcon />
-              </button>
-              {showLogout && (
-                <div className="absolute right-0 top-full mt-1 py-1 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[100px] z-10">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowLogout(false);
-                      onLogout?.();
-                    }}
-                    className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                  >
-                    Logout
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         </header>
@@ -187,7 +152,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                       : "You can view users, but only admin can edit."}
                   </p>
                 </div>
-                {canManage && (
+                {canMutateUsers && (
                   <button
                     type="button"
                     onClick={() => setCreateOpen(true)}
@@ -265,7 +230,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                               )}
                             </td>
                             <td className="px-3 py-1.5 text-left leading-snug text-black">
-                              {isEditing && isAdmin ? (
+                              {isEditing && canMutateUsers ? (
                                 <input
                                   type="password"
                                   value={editForm.password}
@@ -284,7 +249,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                               {user.department_name || user.department || "-"}
                             </td>
                             <td className="px-3 py-1.5 text-left">
-                              {!isAdmin ? (
+                              {!canMutateUsers ? (
                                 <span className="text-xs text-black/60">View only</span>
                               ) : isEditing ? (
                                 <div className="flex items-center gap-2">

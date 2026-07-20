@@ -2,8 +2,18 @@ import { useMemo, useState } from "react";
 import SuperAdminShell from "./SuperAdminShell";
 import CreateUserModal from "./CreateUserModal";
 import { useDeleteUser, useUpdateUser, useUsersList } from "../hooks/useUsersManagement";
+import { useMyPermissions } from "../hooks/useMyPermissions";
+import { useAuthSession } from "../hooks/auth";
 import { getApiErrorMessage, type UserRecord } from "../types/api";
 import type { DeskPageProps } from "../types/desk-pages";
+import {
+  getRoleFromSession,
+  isAdminRole,
+  isCashierRole,
+  isCsgPresident,
+  isDepartmentGovernorRole,
+  isSuperAdminRole,
+} from "../utils/roles";
 
 type UserEditForm = { fullName: string; username: string; password: string };
 type UpdatePayload = { fullName?: string; username?: string; password?: string };
@@ -17,7 +27,10 @@ function roleBadge(role: string | undefined) {
   if (r === "super_admin") return <span className={`${base} bg-amber-100 text-amber-800 ring-1 ring-amber-200`}>Super Admin</span>;
   if (r === "admin") return <span className={`${base} bg-green-100 text-green-800 ring-1 ring-green-200`}>Admin</span>;
   if (r === "csg_president") return <span className={`${base} bg-blue-100 text-blue-800 ring-1 ring-blue-200`}>CSG President</span>;
-  if (r.includes("governor")) return <span className={`${base} bg-purple-100 text-purple-800 ring-1 ring-purple-200`}>{role}</span>;
+  if (r === "cashier") return <span className={`${base} bg-teal-100 text-teal-800 ring-1 ring-teal-200`}>Cashier</span>;
+  if (r === "governor" || r.includes("governor")) {
+    return <span className={`${base} bg-purple-100 text-purple-800 ring-1 ring-purple-200`}>Governor</span>;
+  }
   return <span className={`${base} bg-gray-100 text-gray-700`}>{role ?? "—"}</span>;
 }
 
@@ -30,7 +43,14 @@ export default function AdminManagementPage(props: DeskPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterRole, setFilterRole] = useState("all");
 
-  const { data: users = [], isLoading, refetch } = useUsersList(true);
+  const { has: hasPermission } = useMyPermissions();
+  const { data: session } = useAuthSession();
+  const viewerRole = getRoleFromSession(session);
+  const canMutateUsers = hasPermission("action.users.manage");
+  const canViewUsers =
+    hasPermission("nav.users") || hasPermission("nav.users.list") || canMutateUsers;
+
+  const { data: users = [], isLoading, refetch } = useUsersList(canViewUsers);
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
 
@@ -39,7 +59,11 @@ export default function AdminManagementPage(props: DeskPageProps) {
     return [...users]
       .sort((a, b) => Number(a.id) - Number(b.id))
       .filter((u) => {
-        const matchesRole = filterRole === "all" || String(u.role ?? "").toLowerCase() === filterRole;
+        const role = String(u.role ?? "").toLowerCase();
+        const matchesRole =
+          filterRole === "all" ||
+          role === filterRole ||
+          (filterRole === "governor" && (role === "governor" || role.endsWith("_governor")));
         const matchesSearch =
           !q ||
           String(u.username ?? "").toLowerCase().includes(q) ||
@@ -90,25 +114,37 @@ export default function AdminManagementPage(props: DeskPageProps) {
     });
   };
 
-  const roleOptions = [
-    { value: "all", label: "All Roles" },
-    { value: "super_admin", label: "Super Admin" },
-    { value: "admin", label: "Admin" },
-    { value: "csg_president", label: "CSG President" },
-    { value: "it_governor", label: "IT Governor" },
-    { value: "cba_governor", label: "CBA Governor" },
-    { value: "ceas_governor", label: "CEAS Governor" },
-    { value: "coc_governor", label: "COC Governor" },
-    { value: "chm_governor", label: "CHM Governor" },
-  ];
+  const roleOptions = useMemo(() => {
+    const options = [
+      { value: "all", label: "All Roles" },
+      { value: "super_admin", label: "Super Admin" },
+      { value: "admin", label: "Admin" },
+      { value: "csg_president", label: "CSG President" },
+      { value: "governor", label: "Governor" },
+      { value: "cashier", label: "Cashier" },
+    ];
+    if (isSuperAdminRole(viewerRole)) return options;
+    if (isAdminRole(viewerRole)) {
+      return options.filter((opt) => opt.value !== "super_admin");
+    }
+    if (
+      isCsgPresident(viewerRole) ||
+      isDepartmentGovernorRole(viewerRole) ||
+      isCashierRole(viewerRole)
+    ) {
+      return options.filter((opt) => opt.value !== "super_admin" && opt.value !== "admin");
+    }
+    return options;
+  }, [viewerRole]);
 
   return (
     <SuperAdminShell
       {...props}
       activeNavId="admin_management"
-      pageTitle="Admin Management"
+      pageTitle="List"
       pageSubtitle="View and manage all user accounts across the system"
       headerRight={
+        canMutateUsers ? (
         <button
           type="button"
           onClick={() => setCreateOpen(true)}
@@ -116,6 +152,7 @@ export default function AdminManagementPage(props: DeskPageProps) {
         >
           + Add User
         </button>
+        ) : undefined
       }
     >
       {/* Filters */}
@@ -236,7 +273,7 @@ export default function AdminManagementPage(props: DeskPageProps) {
                               Cancel
                             </button>
                           </div>
-                        ) : (
+                        ) : canMutateUsers ? (
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
@@ -254,6 +291,8 @@ export default function AdminManagementPage(props: DeskPageProps) {
                               Remove
                             </button>
                           </div>
+                        ) : (
+                          <span className="text-[#36454F]/50">—</span>
                         )}
                       </td>
                     </tr>

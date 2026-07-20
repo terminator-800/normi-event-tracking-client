@@ -6,7 +6,6 @@ import { useGovernorScope } from "../hooks/useGovernorScope";
 import { normalizeRoleKey } from "../utils/roles";
 import { getApiErrorMessage, type ApiAxiosError } from "../types/api";
 import {
-  DEPARTMENT_CODE_TO_GOVERNOR_ROLE,
   departmentCodeMatchesGovernorRole,
   formatDepartmentSelectLabel,
   isDepartmentExcludedFromSelect,
@@ -37,7 +36,7 @@ type CreateUserFormState = {
   username: string;
   password: string;
   confirmPassword: string;
-  accountType: "department" | "csg_president";
+  accountType: "department" | "csg_president" | "cashier";
 };
 
 type CreateUserModalProps = {
@@ -173,7 +172,9 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
   const passwordValue = createUserForm.password || "";
 
   const requiresMajor = useMemo(() => {
-    if (createUserForm.accountType === "csg_president") return false;
+    if (createUserForm.accountType === "csg_president" || createUserForm.accountType === "cashier") {
+      return false;
+    }
     if (!isGovernor) return false;
     return majorOptions.length > 0;
   }, [createUserForm.accountType, isGovernor, majorOptions.length]);
@@ -184,7 +185,12 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
   const roleToSend =
     createUserForm.accountType === "csg_president"
       ? "csg_president"
-      : DEPARTMENT_CODE_TO_GOVERNOR_ROLE[selectedDepartment?.code ?? ""] || "department";
+      : createUserForm.accountType === "cashier"
+        ? "cashier"
+        : "governor";
+
+  const needsDepartment =
+    createUserForm.accountType !== "csg_president" && createUserForm.accountType !== "cashier";
 
   const isCreateDisabled =
     isCreatingUser ||
@@ -194,7 +200,7 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
     !passwordValue ||
     !doPasswordsMatch ||
     !isPasswordValid ||
-    (createUserForm.accountType !== "csg_president" && !createUserForm.department.trim()) ||
+    (needsDepartment && !createUserForm.department.trim()) ||
     (requiresMajor && !createUserForm.major.trim());
 
   const resetForm = () => {
@@ -231,7 +237,7 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
             e.preventDefault();
             setCreateUserError("");
 
-            if (createUserForm.accountType !== "csg_president") {
+            if (needsDepartment) {
               if (!createUserForm.department.trim()) {
                 setCreateUserError("Department is required.");
                 return;
@@ -272,16 +278,11 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
                 username: usernameValue,
                 fullName: createUserForm.fullName.trim(),
                 password: createUserForm.password,
-                department:
-                  createUserForm.accountType === "csg_president"
-                    ? ""
-                    : createUserForm.department.trim(),
+                department: needsDepartment ? createUserForm.department.trim() : "",
                 major:
-                  createUserForm.accountType === "csg_president"
-                    ? ""
-                    : isGovernor && requiresMajor
-                      ? createUserForm.major.trim()
-                      : "",
+                  needsDepartment && isGovernor && requiresMajor
+                    ? createUserForm.major.trim()
+                    : "",
                 role: roleToSend,
               },
               {
@@ -301,6 +302,26 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
             </div>
           )}
 
+          {/* 1. Full Name */}
+          <div>
+            <label className="block text-xs font-medium text-black mb-1">
+              Full Name
+            </label>
+            <input
+              type="text"
+              value={createUserForm.fullName}
+              onChange={(e) =>
+                setCreateUserForm((prev) => ({
+                  ...prev,
+                  fullName: e.target.value,
+                }))
+              }
+              className="w-full rounded-lg border border-[#07713c]/40 px-3 py-2 text-sm text-black placeholder:text-black/45 bg-white focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]"
+              placeholder="Enter full name"
+            />
+          </div>
+
+          {/* 2. Account Type & Department */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-black mb-1">
@@ -314,7 +335,7 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
                   setCreateUserForm((prev) => ({
                     ...prev,
                     accountType: nextType,
-                    ...(nextType === "csg_president"
+                    ...(nextType === "csg_president" || nextType === "cashier"
                       ? { department: "", major: "" }
                       : null),
                   }));
@@ -323,10 +344,11 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
               >
                 <option value="department">Department User</option>
                 <option value="csg_president">CSG President</option>
+                <option value="cashier">Cashier</option>
               </select>
             </div>
 
-            {createUserForm.accountType !== "csg_president" && (
+            {needsDepartment && (
               <>
                 <div>
                   <label className="block text-xs font-medium text-black mb-1">
@@ -366,7 +388,7 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
                 </div>
 
                 {isGovernor && (
-                  <div>
+                  <div className="sm:col-span-2">
                     <label className="block text-xs font-medium text-black mb-1">
                       Major
                     </label>
@@ -400,6 +422,31 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
                 )}
               </>
             )}
+          </div>
+
+          {/* 3. Username & Password */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-black mb-1">
+                Username
+              </label>
+              <input
+                type="text"
+                value={createUserForm.username}
+                onChange={(e) =>
+                  setCreateUserForm((prev) => ({
+                    ...prev,
+                    username: e.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#07713c]/40 px-3 py-2 text-sm text-black placeholder:text-black/45 bg-white focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]"
+                placeholder="Enter username"
+              />
+              {!createUserForm.username.trim() &&
+              createUserError?.toLowerCase().includes("username") ? (
+                <p className="text-[11px] text-black mt-1">Username is required.</p>
+              ) : null}
+            </div>
 
             <div>
               <label className="block text-xs font-medium text-black mb-1">
@@ -476,47 +523,6 @@ export default function CreateUserModal({ open, onClose }: CreateUserModalProps)
                 </p>
               )}
             </div>
-          </div>
-
-          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
-            <div>
-              <label className="block text-xs font-medium text-black mb-1">
-                Full Name
-              </label>
-              <input
-                type="text"
-                value={createUserForm.fullName}
-                onChange={(e) =>
-                  setCreateUserForm((prev) => ({
-                    ...prev,
-                    fullName: e.target.value,
-                  }))
-                }
-                className="w-full rounded-lg border border-[#07713c]/40 px-3 py-2 text-sm text-black placeholder:text-black/45 bg-white focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]"
-                placeholder="Enter full name"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-black mb-1">
-                Username
-              </label>
-              <input
-                type="text"
-                value={createUserForm.username}
-                onChange={(e) =>
-                  setCreateUserForm((prev) => ({
-                    ...prev,
-                    username: e.target.value,
-                  }))
-                }
-                className="w-full rounded-lg border border-[#07713c]/40 px-3 py-2 text-sm text-black placeholder:text-black/45 bg-white focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]"
-                placeholder="Enter username"
-              />
-            </div>
-            {!createUserForm.username.trim() &&
-            createUserError?.toLowerCase().includes("username") ? (
-              <p className="text-[11px] text-black">Username is required.</p>
-            ) : null}
           </div>
 
           <div className="px-1 pt-1 flex justify-end gap-2">
