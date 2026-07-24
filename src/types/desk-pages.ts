@@ -40,6 +40,8 @@ export type AttendanceEvent = {
   audienceNotes?: string;
   isAllDepartments?: boolean;
   is_all_departments?: boolean | number;
+  event_mode?: "TIME_IN_OUT" | "TIME_IN_ONLY" | string;
+  time_in_only?: boolean;
   am_time_in?: string | null;
   am_time_out?: string | null;
   pm_time_in?: string | null;

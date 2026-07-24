@@ -122,12 +122,57 @@ export async function getPaymentStudent(studentId: string): Promise<MappedPaymen
   return mapPaymentRow((obj?.student ?? obj) as Record<string, unknown>);
 }
 
-export async function lookupPaymentStudent(identifier: string): Promise<MappedPaymentRow> {
+export type PaymentStudentMatch = {
+  studentId: string;
+  studentName: string;
+  course: string;
+  department: string;
+  year: string;
+};
+
+export type PaymentStudentLookupResult = {
+  student: MappedPaymentRow | null;
+  matches: PaymentStudentMatch[];
+};
+
+function mapPaymentStudentMatch(row: Record<string, unknown>): PaymentStudentMatch {
+  return {
+    studentId: String(row.studentId ?? row.student_id ?? "").trim(),
+    studentName: String(row.studentName ?? row.student_name ?? "Unknown Student").trim(),
+    course: String(row.course ?? row.course_code ?? "—"),
+    department: String(row.department ?? row.department_name ?? "—"),
+    year: String(row.year ?? row.year_level ?? "—"),
+  };
+}
+
+/** Lookup by Student ID, RFID, or name. Multiple name matches return `matches`. */
+export async function lookupPaymentStudent(identifier: string): Promise<PaymentStudentLookupResult> {
   const { data } = await api.get("/payments/students/lookup", {
     params: { identifier: String(identifier ?? "").trim() },
   });
-  const obj = data as Record<string, unknown>;
-  return mapPaymentRow((obj?.student ?? obj) as Record<string, unknown>);
+  const obj = (data ?? {}) as Record<string, unknown>;
+
+  if (Array.isArray(obj.matches)) {
+    return {
+      student: null,
+      matches: (obj.matches as Record<string, unknown>[])
+        .map(mapPaymentStudentMatch)
+        .filter((m) => m.studentId),
+    };
+  }
+
+  if (obj.student && typeof obj.student === "object") {
+    return {
+      student: mapPaymentRow(obj.student as Record<string, unknown>),
+      matches: [],
+    };
+  }
+
+  // Backward-compatible: bare student payload
+  return {
+    student: mapPaymentRow(obj),
+    matches: [],
+  };
 }
 
 export type PaymentSummary = {
@@ -157,6 +202,8 @@ export type PaymentTransactionRow = {
   studentId: string;
   studentName: string;
   amountPaid: number;
+  /** Sum of all fine amounts for the student (scoped period / creator). */
+  totalFines: number;
   paymentMethod: string;
   remarks: string | null;
   paidAt: string;
@@ -178,6 +225,7 @@ export async function getPaymentTransactions(): Promise<PaymentTransactionRow[]>
     studentId: String(row?.studentId ?? ""),
     studentName: String(row?.studentName ?? "Unknown Student"),
     amountPaid: Math.max(0, Number(row?.amountPaid) || 0),
+    totalFines: Math.max(0, Number(row?.totalFines) || 0),
     paymentMethod: String(row?.paymentMethod ?? "Cash"),
     remarks: row?.remarks != null ? String(row.remarks) : null,
     paidAt: String(row?.paidAt ?? ""),

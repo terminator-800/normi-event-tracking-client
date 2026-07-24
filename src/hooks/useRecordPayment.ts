@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "../api/axiosInstance";
 import type { ApiAxiosError } from "../types/api";
-import { patchPaymentsStudentInCache, PAYMENTS_SUMMARY_QUERY_KEY, PAYMENTS_TRANSACTIONS_QUERY_KEY } from "./useGetPayments";
+import { patchPaymentsStudentInCache, PAYMENTS_SUMMARY_QUERY_KEY, PAYMENTS_TRANSACTIONS_QUERY_KEY, PAYMENTS_QUERY_KEY } from "./useGetPayments";
 
 type RecordPaymentVariables = {
   studentId: string;
@@ -33,6 +33,22 @@ export function useRecordPayment() {
       }
       queryClient.invalidateQueries({ queryKey: PAYMENTS_SUMMARY_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: PAYMENTS_TRANSACTIONS_QUERY_KEY });
+    },
+  });
+}
+
+export function useDeletePaymentTransaction() {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ id: number; transactionCode?: string }, ApiAxiosError, number>({
+    mutationFn: async (transactionId) => {
+      const { data } = await api.delete(`/payments/transactions/${encodeURIComponent(transactionId)}`);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: PAYMENTS_SUMMARY_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: PAYMENTS_TRANSACTIONS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: PAYMENTS_QUERY_KEY });
     },
   });
 }
