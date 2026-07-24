@@ -6,13 +6,38 @@ import {
   useCreateAcademicPeriod,
   useDeleteAcademicPeriod,
 } from "../hooks/useAcademicPeriods";
+import { useMyPermissions } from "../hooks/useMyPermissions";
 import { getApiErrorMessage, type AcademicPeriodRecord } from "../types/api";
 import type { DeskPageProps } from "../types/desk-pages";
 
+function periodStatusKey(status: AcademicPeriodRecord["status"] | string | null | undefined): string {
+  return String(status ?? "").trim().toLowerCase();
+}
+
+function isActivePeriod(period: AcademicPeriodRecord): boolean {
+  return periodStatusKey(period.status) === "active";
+}
+
 function statusBadge(status: AcademicPeriodRecord["status"]) {
-  if (status === "active") return <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-800 ring-1 ring-green-200">Active</span>;
-  if (status === "archived") return <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-semibold text-gray-600">Archived</span>;
-  return <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">Draft</span>;
+  if (periodStatusKey(status) === "active") {
+    return (
+      <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-800 ring-1 ring-green-200">
+        Active
+      </span>
+    );
+  }
+  if (periodStatusKey(status) === "archived") {
+    return (
+      <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-semibold text-gray-700 ring-1 ring-gray-200">
+        Inactive
+      </span>
+    );
+  }
+  return (
+    <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
+      Inactive
+    </span>
+  );
 }
 
 function formatDate(value: string | null | undefined): string {
@@ -25,6 +50,8 @@ export default function SystemSettingsPage(props: DeskPageProps) {
   const [schoolYear, setSchoolYear] = useState("");
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
+  const { has: hasPermission, isSuperAdmin } = useMyPermissions();
+  const canManagePeriods = hasPermission("action.academic_period.manage") || isSuperAdmin;
 
   const { data: periods = [], isLoading } = useAcademicPeriodsList();
   const createPeriod = useCreateAcademicPeriod();
@@ -60,24 +87,46 @@ export default function SystemSettingsPage(props: DeskPageProps) {
   };
 
   const handleDelete = (id: number) => {
-    if (!window.confirm("Delete this draft/archived period? This cannot be undone.")) return;
+    if (
+      !window.confirm(
+        "Delete this draft/archived period? Enrollments, events, attendance, fines, and payments for this period will also be permanently deleted.",
+      )
+    ) {
+      return;
+    }
     deletePeriod.mutate(id, {
       onError: (err) => alert(getApiErrorMessage(err, "Failed to delete.")),
     });
   };
 
-  const sorted = [...periods].sort((a, b) => b.id - a.id);
+  const sorted = [...periods].sort((a, b) => {
+    const statusOrder: Record<string, number> = { active: 0, draft: 1, archived: 2 };
+    const byStatus =
+      (statusOrder[periodStatusKey(a.status)] ?? 9) - (statusOrder[periodStatusKey(b.status)] ?? 9);
+    if (byStatus !== 0) return byStatus;
+    const yearCmp = String(b.school_year).localeCompare(String(a.school_year));
+    if (yearCmp !== 0) return yearCmp;
+    const semOrder: Record<string, number> = { "1st sem": 0, "2nd sem": 1, summer: 2 };
+    const bySem =
+      (semOrder[String(a.semester).toLowerCase()] ?? 9) -
+      (semOrder[String(b.semester).toLowerCase()] ?? 9);
+    if (bySem !== 0) return bySem;
+    return Number(b.id) - Number(a.id);
+  });
+  const activePeriods = sorted.filter((p) => isActivePeriod(p));
+  const inactivePeriods = sorted.filter((p) => !isActivePeriod(p));
 
   return (
     <SuperAdminShell
       {...props}
       activeNavId="system_settings"
-      pageTitle="System Settings"
-      pageSubtitle="Manage academic periods and system configuration"
+      pageTitle="School Year"
+      pageSubtitle="Manage school year and semester periods"
     >
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Create period form */}
         <div className="lg:col-span-1">
+          {canManagePeriods ? (
           <div className="rounded-xl border border-[#07713c]/25 bg-white p-5 shadow-sm">
             <h2 className="text-base font-bold text-[#36454F] mb-4">Create School Year</h2>
             <form onSubmit={handleCreate} className="space-y-4">
@@ -106,6 +155,7 @@ export default function SystemSettingsPage(props: DeskPageProps) {
               </button>
             </form>
           </div>
+          ) : null}
 
           {/* System info panel */}
           <div className="mt-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -139,22 +189,61 @@ export default function SystemSettingsPage(props: DeskPageProps) {
               <div className="px-5 py-8 text-center text-sm text-[#36454F]/60">No academic periods found.</div>
             ) : (
               <div className="divide-y divide-[#07713c]/10">
-                {sorted.map((period) => (
-                  <div key={period.id} className={`flex items-center justify-between gap-4 px-5 py-4 ${period.status === "active" ? "bg-green-50/50" : ""}`}>
+                {activePeriods.length > 0 ? (
+                  <div className="bg-[#07713c]/5 px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-[#07713c]">
+                    Active
+                  </div>
+                ) : null}
+                {activePeriods.map((period) => (
+                  <div key={period.id} className="flex items-center justify-between gap-4 bg-green-50/50 px-5 py-4">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-[#36454F] text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-[#36454F]">
                           {period.school_year} · {period.semester}
                         </span>
                         {statusBadge(period.status)}
                       </div>
-                      <p className="text-xs text-[#36454F]/55 mt-0.5">
+                      <p className="mt-0.5 text-xs text-[#36454F]/55">
                         {period.starts_on ? `${formatDate(period.starts_on)} – ${formatDate(period.ends_on)}` : "Dates not set"}
                         {period.activated_by_username && ` · Activated by ${period.activated_by_username}`}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {period.status !== "active" && (
+                  </div>
+                ))}
+
+                {inactivePeriods.length > 0 ? (
+                  <div className="bg-gray-50 px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-[#36454F]/70">
+                    Inactive ({inactivePeriods.length})
+                  </div>
+                ) : (
+                  <div className="bg-gray-50 px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-[#36454F]/70">
+                    Inactive
+                  </div>
+                )}
+                {inactivePeriods.length === 0 ? (
+                  <div className="px-5 py-4 text-sm text-[#36454F]/60">
+                    No inactive semesters yet. Creating a school year adds a draft 2nd semester here.
+                  </div>
+                ) : null}
+                {inactivePeriods.map((period) => (
+                  <div key={period.id} className="flex items-center justify-between gap-4 px-5 py-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-[#36454F]">
+                          {period.school_year} · {period.semester}
+                        </span>
+                        {statusBadge(period.status)}
+                        <span className="text-[11px] text-[#36454F]/50">
+                          {periodStatusKey(period.status) === "draft" ? "Draft" : "Archived"}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-xs text-[#36454F]/55">
+                        {period.starts_on ? `${formatDate(period.starts_on)} – ${formatDate(period.ends_on)}` : "Dates not set"}
+                        {period.activated_by_username && ` · Activated by ${period.activated_by_username}`}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {canManagePeriods && (
                         <button
                           type="button"
                           onClick={() => handleActivate(period.id)}
@@ -164,7 +253,9 @@ export default function SystemSettingsPage(props: DeskPageProps) {
                           Activate
                         </button>
                       )}
-                      {(period.status === "draft" || period.status === "archived") && (
+                      {canManagePeriods &&
+                        (periodStatusKey(period.status) === "draft" ||
+                          periodStatusKey(period.status) === "archived") && (
                         <button
                           type="button"
                           onClick={() => handleDelete(period.id)}
