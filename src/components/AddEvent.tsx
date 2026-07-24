@@ -1,4 +1,4 @@
-import { useEffect, useState, type WheelEvent } from "react";
+﻿import { useEffect, useState, type WheelEvent } from "react";
 import { useAddevent } from "../hooks/useAddevent";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { getApiErrorMessage } from "../types/api";
@@ -63,31 +63,27 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
   const [audienceNotes, setAudienceNotes] = useState("");
   const [useAmHalf, setUseAmHalf] = useState(true);
   const [usePmHalf, setUsePmHalf] = useState(false);
+  const [timeInOnly, setTimeInOnly] = useState(false);
   const [eventPassword, setEventPassword] = useState("");
   const [confirmEventPassword, setConfirmEventPassword] = useState("");
   const [showEventPassword, setShowEventPassword] = useState(false);
   const [showConfirmEventPassword, setShowConfirmEventPassword] = useState(false);
   const addEvent = useAddevent();
-  const isCeasOrCbaGovernor = role === "ceas_governor" || role === "cba_governor";
+  const deptCode = String(governorScope?.departmentCode ?? "").toUpperCase();
+  const isCeasGovernor = isGovernor && (deptCode === "CEAS" || role === "ceas_governor");
+  const isCbaGovernor = isGovernor && (deptCode === "CBA" || role === "cba_governor");
+  const isCeasOrCbaGovernor = isCeasGovernor || isCbaGovernor;
   const shouldShowMajorSelection = false;
-  const majorOptions =
-    role === "cba_governor"
-      ? [
-          "All Majors",
-          "Marketing Management",
-          "Financial Management",
-          "Human Resource Development Management",
-        ]
-      : role === "ceas_governor"
-        ? [
-            "All Majors",
-            "BEED",
-            "BSED",
-            "English",
-            "Filipino",
-            "Math",
-          ]
-        : [];
+  const majorOptions = isCbaGovernor
+    ? [
+        "All Majors",
+        "Marketing Management",
+        "Financial Management",
+        "Human Resource Development Management",
+      ]
+    : isCeasGovernor
+      ? ["All Majors", "BEED", "BSED", "English", "Filipino", "Math"]
+      : [];
 
   const getCourseCodeFromMajor = (m: string): string => {
     if (m === "All Majors") return CEAS_GOVERNOR_ALL_PROGRAMS_SENTINEL;
@@ -99,12 +95,12 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
 
   /** Long label only for CEAS dropdown row `BSED` */
   function ceasMajorOptionLabel(option: string): string {
-    if (option === "BSED") return "BSED — English, Filipino, Math only (no BEED)";
+    if (option === "BSED") return "BSED – English, Filipino, Math only (no BEED)";
     return option;
   }
 
   function cbaMajorOptionLabel(option: string): string {
-    if (option === "All Majors") return "All majors — CBA (MM, FM, HRDM)";
+    if (option === "All Majors") return "All majors – CBA (MM, FM, HRDM)";
     if (option === "Marketing Management") return "Marketing Management (MM)";
     if (option === "Financial Management") return "Financial Management (FM)";
     if (option === "Human Resource Development Management")
@@ -147,6 +143,8 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
 
     if (duration === "whole" || (duration === "half" && useAmHalf)) {
       if (!amTimeIn) e.amTimeIn = "AM Time In is required";
+      // Time Out remains the scheduled session end (used to close the event),
+      // even when attendance itself is Time-In Only.
       if (!amTimeOut) e.amTimeOut = "AM Time Out is required";
     }
 
@@ -201,7 +199,7 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
 
     return {
       name: eventName || "Untitled Event",
-      icon: "📅",
+      icon: "",
       date: eventDate || "",
       duration: durationLabel,
       venue: venue || "",
@@ -236,15 +234,15 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
         pm_grace_out: payload.pmGraceOutMinutes ?? 0,
         yearLevel,
         course_code:
-          role === "ceas_governor"
+          isCeasGovernor
             ? getCourseCodeFromMajor(major)
-            : role === "cba_governor"
+            : isCbaGovernor
               ? major === "All Majors"
                 ? CBA_GOVERNOR_ALL_BSBA_SENTINEL
                 : "BSBA"
               : department,
         major:
-          role === "ceas_governor" &&
+          isCeasGovernor &&
           (major === "BEED" || major === "All Majors" || major === "BSED")
             ? ""
             : shouldShowMajorSelection
@@ -260,6 +258,8 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
         pmTimeOut: pmTimeOut || "",
         fineAmount: Number(fineAmount),
         attendancePassword: eventPassword.trim(),
+        event_mode: timeInOnly ? "TIME_IN_ONLY" : "TIME_IN_OUT",
+        time_in_only: timeInOnly,
       };
 
       addEvent.mutate(backendPayload, {
@@ -296,11 +296,11 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
       {/* p-px + bg-[#07713c]: solid green frame (avoids white bleeding at rounded corners from bg-white) */}
       <div className="w-full max-w-3xl rounded-2xl bg-[#07713c] p-px shadow-2xl">
         <div className="overflow-hidden rounded-[calc(1rem-1px)] bg-white">
-        {/* Header — top radius matches inner panel so green fills the curve, not the white shell */}
+        {/* Header – top radius matches inner panel so green fills the curve, not the white shell */}
         <div className="flex items-center justify-between rounded-t-[calc(1rem-1px)] border-b border-[#07713c]/30 bg-[#07713c]/10 px-6 py-4">
           <div>
             <h1 className="text-xl font-bold text-black">Add New Event</h1>
-            <p className="text-sm text-black/90 mt-0.5">Step {step} Of 3 — {STEPS[step - 1].label}</p>
+            <p className="text-sm text-black/90 mt-0.5">Step {step} of 3 – {STEPS[step - 1].label}</p>
           </div>
           <button
             type="button"
@@ -422,9 +422,8 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
                     duration === "whole" ? "border-[#07713c] bg-green-50" : "border-gray-300 bg-white hover:border-gray-400"
                   }`}
                 >
-                  <span className="text-2xl">☀️</span>
-                  <p className="font-medium text-black mt-1">Whole Day</p>
-                  <p className="text-xs text-black/75">Am + Pm Session</p>
+                  <p className="font-medium text-black">Whole Day</p>
+                  <p className="text-xs text-black/75">AM + PM sessions</p>
                 </button>
                 <button
                   type="button"
@@ -437,9 +436,8 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
                     duration === "half" ? "border-[#07713c] bg-green-50" : "border-gray-300 bg-white hover:border-gray-400"
                   }`}
                 >
-                  <span className="text-2xl">🌓</span>
-                  <p className="font-medium text-black mt-1">Half Day</p>
-                  <p className="text-xs text-black/75">Am Or Pm Only</p>
+                  <p className="font-medium text-black">Half Day</p>
+                  <p className="text-xs text-black/75">AM or PM only</p>
                 </button>
               </div>
               {duration === "half" && (
@@ -474,12 +472,28 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
                   </label>
                 </div>
               )}
+              <label className="mt-4 inline-flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={timeInOnly}
+                  onChange={(e) => setTimeInOnly(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium text-black">Time-In Only</span>
+                  <span className="mt-0.5 block text-xs text-black/70">
+                    Participants Time In once and are marked Present. Time Out is disabled for attendance.
+                  </span>
+                </span>
+              </label>
             </div>
 
             {/* AM Session */}
             {(duration === "whole" || (duration === "half" && useAmHalf)) && (
             <div className="rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] p-4">
-              <h3 className="text-sm font-semibold text-black mb-4">Am Session - Time In / Out</h3>
+              <h3 className="text-sm font-semibold text-black mb-4">
+                {timeInOnly ? "AM Session - Time In" : "AM Session - Time In / Out"}
+              </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-4">
                   <div>
@@ -500,12 +514,11 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
                           </option>
                         ))}
                       </select>
-                      <span className="flex shrink-0 items-center px-2 text-black/60">🕐</span>
                     </div>
                     {errors.amTimeIn && <p className="text-xs text-black mt-1">{errors.amTimeIn}</p>}
                   </div>
                   <div>
-                    <span className="mb-1 block text-xs font-medium text-black">Late — Time In</span>
+                    <span className="mb-1 block text-xs font-medium text-black">Late – Time In</span>
                     <div className="flex gap-2">
                       <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
                         <div className="min-w-0">
@@ -543,15 +556,17 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
                           </select>
                         </div>
                       </div>
-                      <span className="flex shrink-0 items-center self-end px-2 pb-2 text-black/60 select-none" aria-hidden>
-                        🕐
-                      </span>
                     </div>
                     {errors.amGraceInMinutes && <p className="text-xs text-black mt-1">{errors.amGraceInMinutes}</p>}
+                    <p className="mt-1 text-[11px] text-black/65">
+                      After this grace ends, status becomes Time In Cutoff. ID/RFID taps are not recorded and the student is marked Absent.
+                    </p>
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-black">Time Out</label>
+                  <label className="mb-1 block text-xs font-medium text-black">
+                    {timeInOnly ? "Session End (schedule)" : "Time Out"}
+                  </label>
                   <div className="flex gap-2">
                     <select
                       value={amTimeOut}
@@ -568,8 +583,12 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
                         </option>
                       ))}
                     </select>
-                    <span className="flex shrink-0 items-center px-2 text-black/60">🕐</span>
-                  </div>
+                    </div>
+                  {timeInOnly && (
+                    <p className="mt-1 text-[11px] text-black/65">
+                      Used to close the event. Students do not Time Out.
+                    </p>
+                  )}
                   {errors.amTimeOut && <p className="text-xs text-black mt-1">{errors.amTimeOut}</p>}
                 </div>
               </div>
@@ -579,7 +598,9 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
             {/* PM Session */}
             {(duration === "whole" || (duration === "half" && usePmHalf)) && (
             <div className="rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] p-4">
-              <h3 className="text-sm font-semibold text-black mb-4">Pm Session - Time In / Out</h3>
+              <h3 className="text-sm font-semibold text-black mb-4">
+                {timeInOnly ? "PM Session - Time In" : "PM Session - Time In / Out"}
+              </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-4">
                   <div>
@@ -600,12 +621,11 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
                           </option>
                         ))}
                       </select>
-                      <span className="flex shrink-0 items-center px-2 text-black/60">🕐</span>
                     </div>
                     {errors.pmTimeIn && <p className="text-xs text-black mt-1">{errors.pmTimeIn}</p>}
                   </div>
                   <div>
-                    <span className="mb-1 block text-xs font-medium text-black">Late — Time In</span>
+                    <span className="mb-1 block text-xs font-medium text-black">Late – Time In</span>
                     <div className="flex gap-2">
                       <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
                         <div className="min-w-0">
@@ -643,15 +663,17 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
                           </select>
                         </div>
                       </div>
-                      <span className="flex shrink-0 items-center self-end px-2 pb-2 text-black/60 select-none" aria-hidden>
-                        🕐
-                      </span>
                     </div>
                     {errors.pmGraceInMinutes && <p className="text-xs text-black mt-1">{errors.pmGraceInMinutes}</p>}
+                    <p className="mt-1 text-[11px] text-black/65">
+                      After this grace ends, status becomes Time In Cutoff. ID/RFID taps are not recorded and the student is marked Absent.
+                    </p>
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-black">Time Out</label>
+                  <label className="mb-1 block text-xs font-medium text-black">
+                    {timeInOnly ? "Session End (schedule)" : "Time Out"}
+                  </label>
                   <div className="flex gap-2">
                     <select
                       value={pmTimeOut}
@@ -668,8 +690,12 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
                         </option>
                       ))}
                     </select>
-                    <span className="flex shrink-0 items-center px-2 text-black/60">🕐</span>
-                  </div>
+                    </div>
+                  {timeInOnly && (
+                    <p className="mt-1 text-[11px] text-black/65">
+                      Used to close the event. Students do not Time Out.
+                    </p>
+                  )}
                   {errors.pmTimeOut && <p className="text-xs text-black mt-1">{errors.pmTimeOut}</p>}
                 </div>
               </div>
@@ -692,9 +718,9 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
                 >
                   {majorOptions.map((majorOption) => (
                     <option key={majorOption} value={majorOption}>
-                      {role === "ceas_governor"
+                      {isCeasGovernor
                         ? ceasMajorOptionLabel(majorOption)
-                        : role === "cba_governor"
+                        : isCbaGovernor
                           ? cbaMajorOptionLabel(majorOption)
                           : majorOption}
                     </option>
@@ -757,6 +783,10 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
         </span>
       </div>
       <div className="flex justify-between text-sm">
+        <span className="font-semibold text-black">Attendance mode</span>
+        <span className="text-black">{timeInOnly ? "Time-In Only" : "Time In / Time Out"}</span>
+      </div>
+      <div className="flex justify-between text-sm">
         <span className="font-semibold text-black">Fines</span>
         <span className="text-black">{fineAmount ? `₱${fineAmount}` : "-"}</span>
       </div>
@@ -766,8 +796,8 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
         <div className="mt-3 border-t border-[#07713c]/15 pt-3 text-xs text-black">
           <p className="font-semibold mb-1">AM Session</p>
           <p>Time In: {amTimeIn || "-"}</p>
-          <p>Time Out: {amTimeOut || "-"}</p>
-          <p>Late — Time In: {formatGraceDurationLabel(graceTotalMinutes(amGraceHours, amGraceMinutes))}</p>
+          <p>{timeInOnly ? "Session End" : "Time Out"}: {amTimeOut || "-"}</p>
+          <p>Late – Time In: {formatGraceDurationLabel(graceTotalMinutes(amGraceHours, amGraceMinutes))}</p>
         </div>
       )}
 
@@ -776,20 +806,20 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
         <div className="mt-3 border-t border-[#07713c]/15 pt-3 text-xs text-black">
           <p className="font-semibold mb-1">PM Session</p>
           <p>Time In: {pmTimeIn || "-"}</p>
-          <p>Time Out: {pmTimeOut || "-"}</p>
-          <p>Late — Time In: {formatGraceDurationLabel(graceTotalMinutes(pmGraceHours, pmGraceMinutes))}</p>
+          <p>{timeInOnly ? "Session End" : "Time Out"}: {pmTimeOut || "-"}</p>
+          <p>Late – Time In: {formatGraceDurationLabel(graceTotalMinutes(pmGraceHours, pmGraceMinutes))}</p>
         </div>
       )}
 
       {/* Audience */}
       <div className="mt-3 border-t border-[#07713c]/15 pt-3 text-xs text-black">
         <p className="font-semibold mb-1">Audience</p>
-        {role === "ceas_governor" && major === "BSED" ? (
-          <p>Major: BSED — English, Filipino, Math only (BEED excluded)</p>
+        {isCeasGovernor && major === "BSED" ? (
+          <p>Major: BSED – English, Filipino, Math only (BEED excluded)</p>
         ) : null}
-        {shouldShowMajorSelection && role !== "ceas_governor" && (
+        {shouldShowMajorSelection && !isCeasGovernor && (
           <p>
-            {role === "cba_governor" ? (
+            {isCbaGovernor ? (
               <>Target audience: {cbaMajorOptionLabel(major)}</>
             ) : (
               <>Major: {major}</>
@@ -876,7 +906,7 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
               onClick={() => setStep((s) => Math.max(1, s - 1))}
               className="inline-flex items-center gap-2 px-6 py-3 border border-red-300 bg-red-50 text-black font-medium rounded-lg hover:bg-red-100 transition-colors"
             >
-              ← Back
+              Back
             </button>
           ) : (
             <span />
@@ -888,7 +918,7 @@ export default function AddEvent({ onBack, onNext }: AddEventProps) {
             className="inline-flex items-center gap-2 rounded-lg border border-[#07713c] bg-[#07713c]/10 px-6 py-3 font-medium text-black transition-colors hover:bg-[#07713c]/15 disabled:opacity-60"
           >
             {step === 3 ? (addEvent.isPending ? "Creating..." : "Create Event") : "Next"}
-            {step < 3 && <span>→</span>}
+            {step < 3 && <span></span>}
           </button>
         </div>
         </main>

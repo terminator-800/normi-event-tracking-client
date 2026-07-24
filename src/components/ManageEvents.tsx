@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import AddEvent from "./AddEvent";
+import AttendanceExportModal from "./AttendanceExportModal";
+import AttendanceImportModal from "./AttendanceImportModal";
+import EventConfigExportModal from "./EventConfigExportModal";
+import EventConfigImportModal from "./EventConfigImportModal";
 import PaginationBar from "./PaginationBar";
 import SearchMagnifierIcon from "./SearchMagnifierIcon";
-import SidebarNavIcon from "./SidebarNavIcon";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
-import UserCircleIcon from "./UserCircleIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import { useGetAllEvents } from "../hooks/useGetAllEvents";
 import { useEditEvent } from "../hooks/useEditEvent";
 import { useDeleteEvent } from "../hooks/useDeleteEvent";
-import { useGovernorScope } from "../hooks/useGovernorScope";
-import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel, isCsgPresident } from "../utils/roles";
+import { useUpdateEventTimeout } from "../hooks/useUpdateEventTimeout";
+import { useAppNavItems, useMyPermissions } from "../hooks/useMyPermissions";
 import { formatEventDateForDisplay, formatSqlTimeForDisplay } from "../hooks/useGetEvents";
+import api from "../api/axiosInstance";
 import {
   formatDurationForEventsList,
   getEventSessionKindForFilter,
@@ -21,6 +24,7 @@ import {
 } from "../utils/eventDurationDisplay";
 import {
   AM_SESSION_TIME_OPTIONS,
+  AM_SESSION_TIME_OUT_OPTIONS,
   EVENT_TIME_SELECT_CLASS,
   GRACE_HOUR_OPTIONS,
   GRACE_MINUTE_OPTIONS,
@@ -39,7 +43,6 @@ import type { DisplayEvent } from "../types/events";
 type ManageEventsPageProps = DeskPageProps;
 type EventModalMode = "view" | "edit";
 type ViewMode = "list" | "grid";
-type ReportMode = "export" | "settings" | "import";
 type SessionKindFilter = "all" | "whole" | "am" | "pm";
 
 type EditableEvent = DisplayEvent & {
@@ -81,6 +84,8 @@ type EventScheduleFields = {
 type EventModalScheduleProps = {
   ev: EditableEvent;
   readOnly: boolean;
+  /** Ongoing events: only time-out can be changed (early end). */
+  timeoutOnly?: boolean;
   onPatch?: (partial: EventSchedulePatch) => void;
 };
 
@@ -105,6 +110,7 @@ const EVENTS_GRID_PAGE_SIZE = 12;
 /** Manage Event main content text (sidebar + top header excluded). */
 const EVENTS_PAGE_TEXT = "text-black";
 const EVENTS_TH_TEXT = "font-bold text-white";
+const TABLE_CELL_NOWRAP = "[&_th]:whitespace-nowrap [&_tbody_td]:whitespace-nowrap";
 
 function normStatusKey(status: string | null | undefined): string {
   const n = String(status ?? "").trim().toLowerCase();
@@ -114,10 +120,19 @@ function normStatusKey(status: string | null | undefined): string {
   return n;
 }
 
-/** Completed or ongoing events cannot be edited (only upcoming / not-yet-active rows). */
+/** Completed events cannot be fully edited; Ongoing can only adjust time-out. */
 function isEventLockedFromEditing(status: string | null | undefined): boolean {
   const k = normStatusKey(status);
   return k === "completed" || k === "ongoing";
+}
+
+function isEventOngoing(status: string | null | undefined): boolean {
+  return normStatusKey(status) === "ongoing";
+}
+
+/** Completed events hide export / edit (delete stays for Super Admin). */
+function isEventCompleted(status: string | null | undefined): boolean {
+  return normStatusKey(status) === "completed";
 }
 
 /** Label shown in badges (API may still send "Active"). */
@@ -194,17 +209,17 @@ function getEventScheduleFields(ev: EditableEvent): EventScheduleFields {
   };
 }
 
-function EventModalSchedule({ ev, readOnly, onPatch }: EventModalScheduleProps) {
+function EventModalSchedule({ ev, readOnly, timeoutOnly = false, onPatch }: EventModalScheduleProps) {
   const { sessionFilter } = resolveEventDurationUi(ev);
   const s = getEventScheduleFields(ev);
   const hasAmData = s.amIn || s.amOut || s.amGraceIn != null;
   const hasPmData = s.pmIn || s.pmOut || s.pmGraceIn != null;
-  const showAmBlock = readOnly
+  const showAmBlock = readOnly || timeoutOnly
     ? sessionFilter === "whole"
       ? hasAmData
       : sessionFilter === "am_only"
     : sessionFilter === "whole" || sessionFilter === "am_only";
-  const showPmBlock = readOnly
+  const showPmBlock = readOnly || timeoutOnly
     ? sessionFilter === "whole"
       ? hasPmData
       : sessionFilter === "pm_only"
@@ -221,6 +236,80 @@ function EventModalSchedule({ ev, readOnly, onPatch }: EventModalScheduleProps) 
 
   const gAmIn = finiteGraceMinutes(ev.amGraceInMinutes ?? ev.am_grace_in);
   const gPmIn = finiteGraceMinutes(ev.pmGraceInMinutes ?? ev.pm_grace_in);
+
+  if (timeoutOnly && onPatch) {
+    return (
+      <div>
+        <p className="mb-2 text-xs font-semibold text-black">Time in / out &amp; late threshold</p>
+        <p className="mb-3 rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.06] px-3 py-2 text-xs leading-relaxed text-black">
+          Event ended early? Move <strong>Time out</strong> earlier so students can time out now instead of
+          waiting for the original end time.
+        </p>
+        <div className="space-y-3">
+          {showAmBlock && (
+            <div className="rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] px-3 py-2">
+              <p className="mb-2 text-xs font-medium text-black">AM Session</p>
+              <div className="space-y-2 text-sm">
+                {row("Time in", s.amIn)}
+                {row(
+                  "Late — time in",
+                  s.amGraceIn != null ? formatGraceDurationLabel(s.amGraceIn) : null,
+                )}
+                <div className="flex w-full min-w-0 flex-col gap-1.5 pt-1 text-left">
+                  <span className="text-xs font-medium text-black/85">Time out</span>
+                  <select
+                    className={EVENT_TIME_SELECT_CLASS}
+                    value={sqlTimeToSessionSelectValue(ev.am_time_out ?? ev.amTimeOut, "am")}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      onPatch({ am_time_out: v ? twelveHourLabelToSqlTime(v) : null });
+                    }}
+                  >
+                    <option value="">Select time</option>
+                    {AM_SESSION_TIME_OUT_OPTIONS.map((timeOption) => (
+                      <option key={`am-out-early-${timeOption}`} value={timeOption}>
+                        {timeOption}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+          {showPmBlock && (
+            <div className="rounded-lg border border-[#07713c]/25 bg-[#07713c]/[0.04] px-3 py-2">
+              <p className="mb-2 text-xs font-medium text-black">PM Session</p>
+              <div className="space-y-2 text-sm">
+                {row("Time in", s.pmIn)}
+                {row(
+                  "Late — time in",
+                  s.pmGraceIn != null ? formatGraceDurationLabel(s.pmGraceIn) : null,
+                )}
+                <div className="flex w-full min-w-0 flex-col gap-1.5 pt-1 text-left">
+                  <span className="text-xs font-medium text-black/85">Time out</span>
+                  <select
+                    className={EVENT_TIME_SELECT_CLASS}
+                    value={sqlTimeToSessionSelectValue(ev.pm_time_out ?? ev.pmTimeOut, "pm")}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      onPatch({ pm_time_out: v ? twelveHourLabelToSqlTime(v) : null });
+                    }}
+                  >
+                    <option value="">Select time</option>
+                    {PM_SESSION_TIME_OPTIONS.map((timeOption) => (
+                      <option key={`pm-out-early-${timeOption}`} value={timeOption}>
+                        {timeOption}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (!readOnly && onPatch) {
     return (
@@ -383,6 +472,9 @@ function EventModalSchedule({ ev, readOnly, onPatch }: EventModalScheduleProps) 
                           </select>
                         </div>
                       </div>
+                      <p className="text-[11px] text-black/65">
+                        After this grace ends: Time In Cutoff — taps not recorded, student marked Absent.
+                      </p>
                     </div>
                   </div>
                   <div className="flex w-full min-w-0 flex-col gap-1.5 text-left">
@@ -462,11 +554,8 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
   const { data: apiEvents = [], isPending: isEventsLoading, isError: isEventsError } =
     useGetAllEvents();
   const editEventMutation = useEditEvent();
+  const updateTimeoutMutation = useUpdateEventTimeout();
   const deleteEventMutation = useDeleteEvent();
-  const { role, isGovernor, governorScope } = useGovernorScope();
-  const [showLogout, setShowLogout] = useState(false);
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportMode] = useState<ReportMode>("export");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All Status");
   const [sessionKindFilter, setSessionKindFilter] = useState<SessionKindFilter>("all");
@@ -479,17 +568,46 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [editSaveError, setEditSaveError] = useState<string | null>(null);
+  const [editSaveSuccess, setEditSaveSuccess] = useState<string | null>(null);
   const [showEditNotAllowedModal, setShowEditNotAllowedModal] = useState(false);
   const [editNotAllowedEventLabel, setEditNotAllowedEventLabel] = useState("");
   const [eventsPage, setEventsPage] = useState(1);
+  const [showImportConfig, setShowImportConfig] = useState(false);
+  const [showImportAttendance, setShowImportAttendance] = useState(false);
+  const [exportConfigEvent, setExportConfigEvent] = useState<DisplayEvent | null>(null);
+  const [exportAttendanceEvent, setExportAttendanceEvent] = useState<DisplayEvent | null>(null);
+  const [eventPasswordReveal, setEventPasswordReveal] = useState<{
+    loading: boolean;
+    password: string | null;
+    recoverable: boolean;
+    hasPassword: boolean;
+  } | null>(null);
+  const [showRevealedEventPassword, setShowRevealedEventPassword] = useState(false);
   const activeNav = "manage_events";
-  const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
-  const isCsgRole = isCsgPresident(role);
-  const normalizedRole = String(role || "").toLowerCase().trim();
-  const isAdmin = normalizedRole === "admin";
-  const isSuperAdmin = normalizedRole === "super_admin";
-  /** Admins and department governors can create and edit events */
-  const canManageEvents = isAdmin || isGovernor || isCsgRole;
+  const { has: hasPermission, isSuperAdmin } = useMyPermissions();
+  /** Event actions are controlled only by Role Permission checkboxes. */
+  const canCreateEvent = hasPermission("action.event.create");
+  const canEditEvent = hasPermission("action.event.edit");
+  const canDeleteEvent = hasPermission("action.event.delete");
+  const canManageEvents = canCreateEvent || canEditEvent || canDeleteEvent;
+  /** Super Admin may delete completed/ongoing events; others only non-completed. */
+  const canDeleteEventByStatus = (status: string | null | undefined) =>
+    canDeleteEvent && (isSuperAdmin || !isEventCompleted(status));
+  const canExportConfig =
+    isSuperAdmin ||
+    hasPermission("action.event.export_config") ||
+    hasPermission("action.event.export");
+  const canExportAttendance =
+    isSuperAdmin ||
+    hasPermission("action.event.export_attendance") ||
+    hasPermission("action.event.export");
+  const canImportConfig =
+    hasPermission("action.event.import_config") || hasPermission("action.event.export");
+  const canImportAttendance =
+    hasPermission("action.event.import_attendance") || hasPermission("action.event.export");
+  /** Super Admin can export any event (including completed); others only non-completed while managing. */
+  const canShowEventExports = (status: string | null | undefined) =>
+    (canExportConfig || canExportAttendance) && (isSuperAdmin || !isEventCompleted(status));
   /**
    * Display amount for the Fines column — never 0 (uses {@link FINE_PER_ABSENT} as minimum).
    */
@@ -510,7 +628,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
     return FINE_PER_ABSENT;
   };
 
-  const navItems = getAppNavItems({ isAdmin: isAdmin || isSuperAdmin, isSuperAdmin, isCsgPresident: isCsgRole });
+  const navItems = useAppNavItems();
 
 
   /** Live events from API only. */
@@ -518,9 +636,12 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
 
   const openEventModal = (ev: DisplayEvent, mode: EventModalMode = "edit") => {
     setEditSaveError(null);
+    setEditSaveSuccess(null);
+    setEventPasswordReveal(null);
+    setShowRevealedEventPassword(false);
     setSelectedEvent(ev);
     const wantEdit = mode === "edit" && !isEventLockedFromEditing(ev.status);
-    const openEdit = canManageEvents && wantEdit;
+    const openEdit = canEditEvent && wantEdit;
     setEditableEvent(() => {
       if (!openEdit) return { ...ev };
       const duration = durationNormalizedForSessionEdit(ev);
@@ -533,19 +654,52 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
       }
       return { ...ev, duration, fine, fineAmount: fine };
     });
-    setEventModalMode(!canManageEvents || !wantEdit ? "view" : "edit");
+    setEventModalMode(!canEditEvent || !wantEdit ? "view" : "edit");
   };
 
   const closeEventModal = () => {
     setSelectedEvent(null);
     setEditableEvent(null);
     setEditSaveError(null);
+    setEditSaveSuccess(null);
     setEventModalMode("edit");
+    setEventPasswordReveal(null);
+    setShowRevealedEventPassword(false);
   };
 
+  useEffect(() => {
+    if (!isSuperAdmin || !selectedEvent?.id) {
+      return;
+    }
+    let cancelled = false;
+    setEventPasswordReveal({ loading: true, password: null, recoverable: false, hasPassword: false });
+    void api
+      .get(`/events/${selectedEvent.id}/attendance-password`)
+      .then((res) => {
+        if (cancelled) return;
+        setEventPasswordReveal({
+          loading: false,
+          password: res.data?.password != null ? String(res.data.password) : null,
+          recoverable: Boolean(res.data?.recoverable),
+          hasPassword: Boolean(res.data?.hasPassword),
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEventPasswordReveal({
+          loading: false,
+          password: null,
+          recoverable: false,
+          hasPassword: false,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSuperAdmin, selectedEvent?.id]);
+
   const handleDeleteSelectedEvent = () => {
-    if (!canManageEvents) return;
-    if (!selectedEvent) return;
+    if (!selectedEvent || !canDeleteEventByStatus(selectedEvent.status)) return;
     setDeleteError(null);
     const eventId = selectedEvent.id ?? (selectedEvent as EditableEvent)._id;
     if (eventId == null || String(eventId).trim() === "") {
@@ -569,7 +723,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
   };
 
   const saveEditableEvent = () => {
-    if (!canManageEvents) return;
+    if (!canEditEvent) return;
     if (!editableEvent) return;
     const eventId = editableEvent.id ?? editableEvent._id;
     if (eventId == null || String(eventId).trim() === "") {
@@ -582,6 +736,12 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
       date: eventYmdForDateInput(editableEvent.date),
       venue: String(editableEvent.venue ?? "").trim(),
       duration: String(editableEvent.duration ?? "Whole Day").trim(),
+      event_mode:
+        editableEvent.event_mode === "TIME_IN_ONLY" || editableEvent.time_in_only
+          ? "TIME_IN_ONLY"
+          : "TIME_IN_OUT",
+      time_in_only:
+        editableEvent.event_mode === "TIME_IN_ONLY" || editableEvent.time_in_only === true,
       am_time_in: editableEvent.am_time_in ?? null,
       am_time_out: editableEvent.am_time_out ?? null,
       pm_time_in: editableEvent.pm_time_in ?? null,
@@ -611,12 +771,54 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
     );
   };
 
+  const saveEventTimeout = () => {
+    if (!canEditEvent) return;
+    if (!editableEvent || !isEventOngoing(editableEvent.status)) return;
+    const eventId = editableEvent.id ?? editableEvent._id;
+    if (eventId == null || String(eventId).trim() === "") {
+      setEditSaveError("Missing event id.");
+      return;
+    }
+
+    const { sessionFilter } = resolveEventDurationUi(editableEvent);
+    const payload: { am_time_out?: string | null; pm_time_out?: string | null } = {};
+    if (sessionFilter === "whole" || sessionFilter === "am_only") {
+      payload.am_time_out = editableEvent.am_time_out ?? null;
+    }
+    if (sessionFilter === "whole" || sessionFilter === "pm_only") {
+      payload.pm_time_out = editableEvent.pm_time_out ?? null;
+    }
+
+    if (payload.am_time_out === undefined && payload.pm_time_out === undefined) {
+      setEditSaveError("No session time-out to update.");
+      return;
+    }
+
+    setEditSaveError(null);
+    setEditSaveSuccess(null);
+    updateTimeoutMutation.mutate(
+      { id: eventId, payload },
+      {
+        onSuccess: () => {
+          setEditSaveError(null);
+          setEditSaveSuccess(null);
+          closeEventModal();
+        },
+        onError: (error) => {
+          setEditSaveSuccess(null);
+          setEditSaveError(getApiErrorMessage(error, "Could not update time-out."));
+        },
+      },
+    );
+  };
+
   const patchEditableEventSchedule = (partial: EventSchedulePatch) => {
+    setEditSaveSuccess(null);
     setEditableEvent((prev) => (prev ? applySchedulePatch(prev, partial) : prev));
   };
 
   const openDeleteFromRow = (ev: DisplayEvent) => {
-    if (!canManageEvents) return;
+    if (!canDeleteEventByStatus(ev.status)) return;
     setEditableEvent(null);
     setSelectedEvent(ev);
     setDeleteError(null);
@@ -625,7 +827,11 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
 
   const handleEditClick = (ev: DisplayEvent, e?: MouseEvent<HTMLButtonElement>) => {
     e?.stopPropagation?.();
-    if (!canManageEvents) return;
+    if (!canEditEvent) return;
+    if (isEventOngoing(ev.status)) {
+      openEventModal(ev, "view");
+      return;
+    }
     if (isEventLockedFromEditing(ev.status)) {
       const label = ev.name != null && String(ev.name).trim() !== "" ? String(ev.name).trim() : "This event";
       setEditNotAllowedEventLabel(label);
@@ -684,53 +890,22 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
       {/* Sidebar — same green as Attendance */}
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713c] text-white flex flex-col [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate && onNavigate(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                activeNav === item.id ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav
+          items={navItems}
+          activeNavId={activeNav}
+          onNavigate={onNavigate}
+        />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
-          <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3">
+          <div className="mx-auto w-full max-w-7xl">
             <div>
-              <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">Manage Event</h1>
+              <h1 className="font-[Inter,sans-serif] text-[30px] font-extrabold leading-tight text-[#07713c]">Create Event</h1>
               <NavbarAcademicPeriod className="mt-1" />
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="relative flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowLogout((prev) => !prev)}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#07713c]"
-                  aria-label="Account menu"
-                  aria-expanded={showLogout}
-                  aria-haspopup="true"
-                >
-                  <UserCircleIcon />
-                </button>
-                {showLogout && (
-                  <div className="absolute right-0 top-full z-10 mt-1 min-w-[100px] rounded-lg border border-[#07713c]/30 bg-white py-1 shadow-lg">
-                    <button onClick={() => { setShowLogout(false); onLogout?.(); }} className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50">
-                      Logout
-                    </button>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </header>
@@ -801,47 +976,58 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
               </button>
             </div>
             {canManageEvents && (
-              <button
-                type="button"
-                onClick={() => setShowAddEvent(true)}
-                className="rounded-lg border bg-[#07713C] px-4 py-2 text-sm font-medium text-white transition-colors"
-              >
-                + Add Event
-              </button>
+              <>
+                {canImportAttendance && (
+                  <button
+                    type="button"
+                    onClick={() => setShowImportAttendance(true)}
+                    className="rounded-lg border border-[#07713c]/40 bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#07713c]/10"
+                  >
+                    Import Attendance
+                  </button>
+                )}
+                {canImportConfig && (
+                  <button
+                    type="button"
+                    onClick={() => setShowImportConfig(true)}
+                    className="rounded-lg border border-[#07713c]/40 bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-[#07713c]/10"
+                  >
+                    Import Event
+                  </button>
+                )}
+                {canCreateEvent && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddEvent(true)}
+                    className="rounded-lg border bg-[#07713C] px-4 py-2 text-sm font-medium text-white transition-colors"
+                  >
+                    + Add Event
+                  </button>
+                )}
+              </>
             )}
           </div>
 
           {/* Events Content - List or Grid */}
           <div className="overflow-hidden rounded-xl border border-[#07713c]/30 bg-white shadow-sm">
             {viewMode === "list" ? (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[960px] table-fixed border-collapse text-sm">
-                  <colgroup>
-                    <col className="w-[20%]" />
-                    <col className="w-[12%]" />
-                    <col className="w-[10%]" />
-                    <col className="w-[18%]" />
-                    <col className="w-[9%]" />
-                    <col className="w-[11%]" />
-                    <col className="w-[20%]" />
-                  </colgroup>
-                  <thead className={`border-b border-[#07713c]/30 bg-[#07713c] text-xs uppercase tracking-wide ${EVENTS_TH_TEXT}`}>
+              <div className="min-w-0 overflow-x-auto">
+                <table className={`w-full text-sm ${TABLE_CELL_NOWRAP}`}>
+                  <thead className={`border-b border-[#07713c]/30 bg-[#07713c] text-center text-xs uppercase tracking-wide ${EVENTS_TH_TEXT}`}>
                     <tr>
-                      <th className="align-middle px-3 py-3 text-left">Event Name</th>
-                      <th className="align-middle px-3 py-3 text-left">Date</th>
-                      <th className="align-middle px-3 py-3 text-left">Session</th>
-                      <th className="align-middle px-3 py-3 text-left">Venue</th>
-                      <th className="whitespace-nowrap px-3 py-3 text-right align-middle">
-                        Fines
-                      </th>
-                      <th className="align-middle px-3 py-3 text-center">Status</th>
-                      <th className="align-middle px-3 py-3 text-right">Actions</th>
+                      <th className="px-4 py-2.5 align-middle text-center">Event Name</th>
+                      <th className="px-4 py-2.5 align-middle text-center">Date</th>
+                      <th className="px-4 py-2.5 align-middle text-center">Session</th>
+                      <th className="px-4 py-2.5 align-middle text-center">Venue</th>
+                      <th className="px-4 py-2.5 align-middle text-center">Fines</th>
+                      <th className="px-4 py-2.5 align-middle text-center">Status</th>
+                      <th className="px-4 py-2.5 align-middle text-center">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredEvents.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-4 py-10 text-center text-sm text-black/70">
+                        <td colSpan={7} className="px-4 py-8 text-center text-sm text-black/70">
                           No event records.
                         </td>
                       </tr>
@@ -851,34 +1037,34 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                         return (
                           <tr
                             key={eventRowKey(ev, i)}
-                            className="cursor-pointer border-b border-[#07713c]/15 hover:bg-[#07713c]/[0.04]"
+                            className="cursor-pointer border-t border-[#07713c]/20 hover:bg-[#07713c]/10"
                             onClick={() => openEventModal(ev, "view")}
                           >
-                            <td className="min-w-0 px-3 py-3 align-middle text-black">
+                            <td className="px-4 py-2.5 text-center text-black">
                               <span className="block truncate">{ev.name}</span>
                             </td>
-                            <td className="whitespace-nowrap px-3 py-3 align-middle text-black">
+                            <td className="px-4 py-2.5 text-center text-black">
                               {formatEventDateForDisplay(ev.date)}
                             </td>
-                            <td className="px-3 py-3 align-middle text-black">
+                            <td className="px-4 py-2.5 text-center text-black">
                               {formatDurationForEventsList(ev)}
                             </td>
-                            <td className="min-w-0 px-3 py-3 align-middle text-black">
+                            <td className="px-4 py-2.5 text-center text-black">
                               <span className="line-clamp-2 break-words" title={ev.venue}>
                                 {ev.venue}
                               </span>
                             </td>
-                            <td className="align-middle py-3 px-3 text-right tabular-nums text-sm text-black">
+                            <td className="px-4 py-2.5 text-center tabular-nums text-black">
                               ₱{Number(fineVal).toLocaleString("en-PH")}
                             </td>
-                            <td className="align-middle py-3 px-3 text-center">
-                              <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getEventStatusClass(ev.status)}`}>
+                            <td className="px-4 py-2.5 text-center">
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${getEventStatusClass(ev.status)}`}>
                                 {displayEventStatus(ev.status)}
                               </span>
                             </td>
-                            <td className="align-middle py-3 px-3 text-right">
+                            <td className="px-4 py-2.5 text-center">
                               <div
-                                className="flex flex-wrap items-center justify-end gap-1"
+                                className="flex flex-wrap items-center justify-center gap-1"
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <button
@@ -888,24 +1074,61 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                                 >
                                   View
                                 </button>
-                                {canManageEvents && (
+                                {canShowEventExports(ev.status) && (
                                   <>
-                                    <button
-                                      type="button"
-                                      title="Edit event"
-                                      className="rounded-md px-2 py-1 text-xs font-medium text-black hover:bg-blue-50"
-                                      onClick={(e) => handleEditClick(ev, e)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="px-2 py-1 rounded-md text-xs font-medium text-black hover:bg-red-50"
-                                      onClick={() => openDeleteFromRow(ev)}
-                                    >
-                                      Delete
-                                    </button>
+                                    {canExportConfig && (
+                                      <button
+                                        type="button"
+                                        title="Export event configuration"
+                                        className="rounded-md px-2 py-1 text-xs font-medium text-black hover:bg-[#07713c]/10"
+                                        onClick={() => setExportConfigEvent(ev)}
+                                      >
+                                        Export Event
+                                      </button>
+                                    )}
+                                    {canExportAttendance && (
+                                      <button
+                                        type="button"
+                                        title="Export attendance JSON"
+                                        className="rounded-md px-2 py-1 text-xs font-medium text-black hover:bg-[#07713c]/10"
+                                        onClick={() => setExportAttendanceEvent(ev)}
+                                      >
+                                        Export Attendance
+                                      </button>
+                                    )}
                                   </>
+                                )}
+                                {canManageEvents && !isEventCompleted(ev.status) && (
+                                  <>
+                                    {canEditEvent && (
+                                      <button
+                                        type="button"
+                                        title="Edit event"
+                                        className="rounded-md px-2 py-1 text-xs font-medium text-black hover:bg-blue-50"
+                                        onClick={(e) => handleEditClick(ev, e)}
+                                      >
+                                        Edit
+                                      </button>
+                                    )}
+                                    {canDeleteEventByStatus(ev.status) && (
+                                      <button
+                                        type="button"
+                                        className="px-2 py-1 rounded-md text-xs font-medium text-black hover:bg-red-50"
+                                        onClick={() => openDeleteFromRow(ev)}
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                                {isEventCompleted(ev.status) && canDeleteEventByStatus(ev.status) && (
+                                  <button
+                                    type="button"
+                                    className="px-2 py-1 rounded-md text-xs font-medium text-black hover:bg-red-50"
+                                    onClick={() => openDeleteFromRow(ev)}
+                                  >
+                                    Delete
+                                  </button>
                                 )}
                               </div>
                             </td>
@@ -968,24 +1191,61 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                         >
                           View
                         </button>
-                        {canManageEvents && (
+                        {canShowEventExports(ev.status) && (
                           <>
-                            <button
-                              type="button"
-                              title="Edit event"
-                              className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-blue-100"
-                              onClick={(e) => handleEditClick(ev, e)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-red-100"
-                              onClick={() => openDeleteFromRow(ev)}
-                            >
-                              Delete
-                            </button>
+                            {canExportConfig && (
+                              <button
+                                type="button"
+                                title="Export event configuration"
+                                className="rounded-md bg-[#07713c]/10 px-2.5 py-1 text-xs font-medium text-black hover:bg-[#07713c]/20"
+                                onClick={() => setExportConfigEvent(ev)}
+                              >
+                                Export Event
+                              </button>
+                            )}
+                            {canExportAttendance && (
+                              <button
+                                type="button"
+                                title="Export attendance JSON"
+                                className="rounded-md bg-[#07713c]/10 px-2.5 py-1 text-xs font-medium text-black hover:bg-[#07713c]/20"
+                                onClick={() => setExportAttendanceEvent(ev)}
+                              >
+                                Export Attendance
+                              </button>
+                            )}
                           </>
+                        )}
+                        {canManageEvents && !isEventCompleted(ev.status) && (
+                          <>
+                            {canEditEvent && (
+                              <button
+                                type="button"
+                                title="Edit event"
+                                className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-blue-100"
+                                onClick={(e) => handleEditClick(ev, e)}
+                              >
+                                Edit
+                              </button>
+                            )}
+                            {canDeleteEventByStatus(ev.status) && (
+                              <button
+                                type="button"
+                                className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-red-100"
+                                onClick={() => openDeleteFromRow(ev)}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </>
+                        )}
+                        {isEventCompleted(ev.status) && canDeleteEventByStatus(ev.status) && (
+                          <button
+                            type="button"
+                            className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-black hover:bg-red-100"
+                            onClick={() => openDeleteFromRow(ev)}
+                          >
+                            Delete
+                          </button>
                         )}
                       </div>
                     </div>
@@ -1010,68 +1270,6 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
         <AddEvent onBack={() => setShowAddEvent(false)} onNext={() => {}} />
       )}
 
-      {showReportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl overflow-hidden">
-            <div className="border-b border-[#07713c]/30 bg-[#07713c]/10 px-5 py-3">
-              <h3 className="font-semibold text-black">
-                {reportMode === "settings"
-                  ? `${roleLabel} Settings`
-                  : reportMode === "import"
-                    ? "Import Data"
-                    : "Export Data"}
-              </h3>
-            </div>
-            <div className="p-5 space-y-4 text-sm">
-              <p className="text-black">
-                {reportMode === "settings"
-                  ? "Settings are not implemented yet (this is a placeholder)."
-                  : reportMode === "import"
-                    ? "Choose what you want to import."
-                    : "Choose what you want to export."}
-              </p>
-              {reportMode !== "settings" && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    className="rounded-xl border border-[#07713c]/30 p-4 text-left transition-colors hover:border-[#07713c] hover:bg-[#07713c]/10"
-                    onClick={() => setShowReportModal(false)}
-                  >
-                    <p className="font-semibold text-black">
-                      {reportMode === "import" ? "Import Attendance" : "Export Attendance"}
-                    </p>
-                    <p className="text-xs text-black/75">
-                      {reportMode === "import"
-                        ? "Import attendance records into the system."
-                        : "Download attendance records for reports."}
-                    </p>
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-xl border border-[#07713c]/30 p-4 text-left transition-colors hover:border-[#07713c] hover:bg-[#07713c]/10"
-                    onClick={() => setShowReportModal(false)}
-                  >
-                    <p className="font-semibold text-black">
-                      {reportMode === "import" ? "Import Students" : "Export Students"}
-                    </p>
-                    <p className="text-xs text-black/75">
-                      {reportMode === "import"
-                        ? "Import student records into the system."
-                        : "Download student or department records."}
-                    </p>
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="px-4 py-3 border-t border-gray-200 flex justify-end">
-              <button type="button" onClick={() => setShowReportModal(false)} className="cursor-pointer rounded-lg border border-[#07713c] bg-[#07713c]/10 px-4 py-2 text-black hover:bg-[#07713c]/15">
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Edit blocked: Completed / Ongoing */}
       {showEditNotAllowedModal && (
         <div
@@ -1093,12 +1291,13 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
             <div className="space-y-3 px-5 py-4 text-sm leading-relaxed text-black/90">
               <p>
                 <span className="font-semibold text-black">{editNotAllowedEventLabel}</span>
-                <span className="text-black/80"> cannot be edited at this time.</span>
+                <span className="text-black/80"> cannot be fully edited at this time.</span>
               </p>
               <p>
-                For institutional accuracy, events whose status is <strong className="text-black">Completed</strong> or{" "}
-                <strong className="text-black">Ongoing</strong> are locked from modification in this module. If a
-                correction is required, please contact your administrator.
+                <strong className="text-black">Completed</strong> events are locked from modification.
+                For <strong className="text-black">Ongoing</strong> events, open{" "}
+                <strong className="text-black">Event details</strong> to adjust{" "}
+                <strong className="text-black">Time out</strong> if the session ended early.
               </p>
             </div>
             <div className="flex justify-end border-t border-gray-200 px-5 py-3">
@@ -1139,6 +1338,11 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
               )}
               {editSaveError && (
                 <p className="text-xs text-black bg-amber-50 border border-amber-200 p-2 rounded-lg">{editSaveError}</p>
+              )}
+              {editSaveSuccess && (
+                <p className="rounded-lg border border-[#07713c]/30 bg-[#07713c]/10 p-2 text-xs text-black">
+                  {editSaveSuccess}
+                </p>
               )}
               <div>
                 <label className="mb-1 block text-xs font-semibold text-black">Event Name</label>
@@ -1244,9 +1448,60 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
               </div>
               <EventModalSchedule
                 ev={editableEvent}
-                readOnly={eventModalMode === "view"}
-                onPatch={eventModalMode === "edit" ? patchEditableEventSchedule : undefined}
+                readOnly={eventModalMode === "view" && !isEventOngoing(editableEvent.status)}
+                timeoutOnly={
+                  eventModalMode === "view" &&
+                  isEventOngoing(editableEvent.status) &&
+                  canEditEvent
+                }
+                onPatch={
+                  eventModalMode === "edit" ||
+                  (eventModalMode === "view" &&
+                    isEventOngoing(editableEvent.status) &&
+                    canEditEvent)
+                    ? patchEditableEventSchedule
+                    : undefined
+                }
               />
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-black">Attendance mode</label>
+                {eventModalMode === "view" ? (
+                  <p className="rounded-lg border border-[#07713c]/30 bg-[#07713c]/5 px-3 py-2 text-sm text-black">
+                    {editableEvent.event_mode === "TIME_IN_ONLY" || editableEvent.time_in_only
+                      ? "Time-In Only"
+                      : "Time In / Time Out"}
+                  </p>
+                ) : (
+                  <label className="inline-flex items-start gap-2 text-sm text-black">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={
+                        editableEvent.event_mode === "TIME_IN_ONLY" ||
+                        editableEvent.time_in_only === true
+                      }
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setEditableEvent((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                event_mode: checked ? "TIME_IN_ONLY" : "TIME_IN_OUT",
+                                time_in_only: checked,
+                              }
+                            : prev,
+                        );
+                      }}
+                    />
+                    <span>
+                      <span className="font-medium">Time-In Only</span>
+                      <span className="mt-0.5 block text-xs text-black/70">
+                        Participants Time In once and are marked Present. Time Out is disabled.
+                      </span>
+                    </span>
+                  </label>
+                )}
+              </div>
               {eventModalMode !== "view" && (
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-black">Audience scope</label>
@@ -1276,6 +1531,35 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                 )}
               </div>
               <div className="space-y-1.5 text-sm text-black">
+                {isSuperAdmin && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                      Event password (Super Admin)
+                    </p>
+                    {eventPasswordReveal?.loading ? (
+                      <p className="mt-1 text-sm text-black/70">Loading…</p>
+                    ) : !eventPasswordReveal?.hasPassword ? (
+                      <p className="mt-1 text-sm text-black/70">No attendance password set.</p>
+                    ) : !eventPasswordReveal?.recoverable || !eventPasswordReveal.password ? (
+                      <p className="mt-1 text-sm text-black/70">
+                        Password exists but is not recoverable (set before recovery was enabled). Reset by recreating the event or updating the password on create/import.
+                      </p>
+                    ) : (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <code className="rounded bg-white px-2 py-1 text-sm font-semibold text-black">
+                          {showRevealedEventPassword ? eventPasswordReveal.password : "••••••••"}
+                        </code>
+                        <button
+                          type="button"
+                          className="rounded-md border border-[#07713c]/40 bg-white px-2 py-1 text-xs font-medium text-black hover:bg-[#07713c]/10"
+                          onClick={() => setShowRevealedEventPassword((v) => !v)}
+                        >
+                          {showRevealedEventPassword ? "Hide" : "Show"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <p>
                   <span className="font-semibold">Created by:</span>{" "}
                   {editableEvent.created_by_username != null && String(editableEvent.created_by_username).trim() !== ""
@@ -1296,8 +1580,34 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
               </div>
             </div>
             <div className="flex items-center justify-end border-t border-gray-200 px-4 py-3 sm:px-5">
-              <div className="flex gap-2">
-                {canManageEvents && eventModalMode === "edit" && (
+              <div className="flex flex-wrap justify-end gap-2">
+                {editableEvent && canShowEventExports(editableEvent.status) && (
+                  <>
+                    {canExportConfig && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (editableEvent) setExportConfigEvent(editableEvent);
+                        }}
+                        className="rounded-lg border border-[#07713c]/40 px-4 py-2 text-sm text-black hover:bg-[#07713c]/10"
+                      >
+                        Export Event
+                      </button>
+                    )}
+                    {canExportAttendance && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (editableEvent) setExportAttendanceEvent(editableEvent);
+                        }}
+                        className="rounded-lg border border-[#07713c]/40 px-4 py-2 text-sm text-black hover:bg-[#07713c]/10"
+                      >
+                        Export Attendance
+                      </button>
+                    )}
+                  </>
+                )}
+                {editableEvent && canDeleteEventByStatus(editableEvent.status) && (
                   <button
                     type="button"
                     onClick={() => setShowDeleteConfirm(true)}
@@ -1306,7 +1616,23 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
                     Delete
                   </button>
                 )}
-                {canManageEvents && eventModalMode === "edit" && (
+                {canEditEvent &&
+                  eventModalMode === "view" &&
+                  editableEvent &&
+                  isEventOngoing(editableEvent.status) && (
+                  <button
+                    type="button"
+                    onClick={saveEventTimeout}
+                    disabled={updateTimeoutMutation.isPending}
+                    className="rounded-lg border border-[#07713c] bg-[#07713c] px-4 py-2 text-sm font-medium text-white hover:bg-[#055a2e] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {updateTimeoutMutation.isPending ? "Saving…" : "Save time out"}
+                  </button>
+                )}
+                {canEditEvent &&
+                  eventModalMode === "edit" &&
+                  editableEvent &&
+                  !isEventCompleted(editableEvent.status) && (
                   <button
                     type="button"
                     onClick={saveEditableEvent}
@@ -1323,7 +1649,7 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
       )}
 
       {/* Delete confirm (admin or governor) */}
-      {canManageEvents && showDeleteConfirm && selectedEvent && (
+      {canDeleteEvent && showDeleteConfirm && selectedEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
             <div className="bg-red-600 px-6 py-3">
@@ -1358,6 +1684,30 @@ export default function ManageEvents({ onLogout, onNavigate }: ManageEventsPageP
             </div>
           </div>
         </div>
+      )}
+
+      <EventConfigImportModal
+        open={showImportConfig}
+        onClose={() => setShowImportConfig(false)}
+      />
+      <AttendanceImportModal
+        open={showImportAttendance}
+        onClose={() => setShowImportAttendance(false)}
+      />
+      {exportConfigEvent && (
+        <EventConfigExportModal
+          open={Boolean(exportConfigEvent)}
+          event={exportConfigEvent}
+          onClose={() => setExportConfigEvent(null)}
+        />
+      )}
+      {exportAttendanceEvent && (
+        <AttendanceExportModal
+          open={Boolean(exportAttendanceEvent)}
+          event={exportAttendanceEvent}
+          requireDepartmentSelect={canImportAttendance}
+          onClose={() => setExportAttendanceEvent(null)}
+        />
       )}
     </div>
   );
