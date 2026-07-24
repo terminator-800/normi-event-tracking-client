@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
 import Navbar from "./Navbar";
 import EventCard from "./EventCard";
 import UpcomingEventsList from "./UpcomingEventsList";
 import PaginationBar from "./PaginationBar";
-import csgLogo from "../assets/CSG LOGO.jpg";
+import csgLogo from "../assets/csg1.png";
 import { useGetCurrentEvent } from "../hooks/useGetCurrentEvent";
 import { formatEventDateForDisplay } from "../hooks/useGetEvents";
 import { useSubmitAttendance } from "../hooks/useSubmitAttendance";
@@ -15,6 +16,10 @@ import {
 } from "../utils/eventUnlockStorage";
 import { getApiErrorMessage } from "../types/api";
 import type { DisplayEvent } from "../types/events";
+import {
+  lookupPublicStudentAttendance,
+  type PublicStudentAttendanceResult,
+} from "../hooks/usePublicStudentAttendance";
 import toast from "react-hot-toast";
 
 const UPCOMING_EVENTS_PAGE_SIZE = 3;
@@ -51,6 +56,7 @@ const AUTO_SUBMIT_DEBOUNCE_MS = 500;
 const MIN_AUTO_SUBMIT_LENGTH = 6;
 
 export default function Home() {
+  const { eventId: focusEventId } = useParams();
   const [userId, setUserId] = useState("");
   const [eventPasswordInput, setEventPasswordInput] = useState("");
   const [showUnlockPassword, setShowUnlockPassword] = useState(false);
@@ -63,10 +69,14 @@ export default function Home() {
   const [showUpcomingModal, setShowUpcomingModal] = useState(false);
   const [upcomingPage, setUpcomingPage] = useState(1);
   const [ongoingPage, setOngoingPage] = useState(1);
+  const [historyIdentifier, setHistoryIdentifier] = useState("");
+  const [historyResult, setHistoryResult] = useState<PublicStudentAttendanceResult | null>(null);
+  const [historyError, setHistoryError] = useState("");
+  const [isLookingUpHistory, setIsLookingUpHistory] = useState(false);
+  const historyInputRef = useRef<HTMLInputElement>(null);
+  const historyAutoSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const historyClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [now, setNow] = useState(() => new Date());
-  const [useTestTime, setUseTestTime] = useState(false);
-  const [testTime, setTestTime] = useState("");
-  const [testDate, setTestDate] = useState("");
   const { data: eventBundle, isPending: isCurrentEventLoading } = useGetCurrentEvent();
   const currentEvent = eventBundle?.current ?? null;
   const ongoingEvents = useMemo(() => {
@@ -83,6 +93,23 @@ export default function Home() {
     if (!Array.isArray(eventBundle?.upcoming)) return null;
     return eventBundle.upcoming[0] ?? null;
   }, [eventBundle]);
+
+  /** From dashboard deep-link: focus ongoing event, or open upcoming details. */
+  useEffect(() => {
+    if (!focusEventId) return;
+    const ongoingIdx = ongoingEvents.findIndex(
+      (e) => e != null && String(e.id) === String(focusEventId),
+    );
+    if (ongoingIdx >= 0) {
+      setOngoingPage(Math.floor(ongoingIdx / ONGOING_EVENTS_PAGE_SIZE) + 1);
+      setDetailEvent(null);
+      return;
+    }
+    const upcomingMatch = upcomingEvents.find((e) => String(e.id) === String(focusEventId));
+    if (upcomingMatch) {
+      setDetailEvent(upcomingMatch);
+    }
+  }, [focusEventId, ongoingEvents, upcomingEvents]);
 
   useEffect(() => {
     if (!detailEvent) return;
@@ -113,27 +140,7 @@ export default function Home() {
     setShowUnlockPassword(false);
   }, [selectedOngoingEvent?.id]);
 
-  const displayNow = useMemo(() => {
-    if (!useTestTime || !testTime) return now;
-    const m = /^(\d{1,2}):(\d{2})$/.exec(testTime.trim());
-    if (!m) return now;
-    const hh = Number(m[1]);
-    const mm = Number(m[2]);
-    if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-      return now;
-    }
-    const trimmedDate = String(testDate ?? "").trim();
-    const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmedDate);
-    if (ymd) {
-      const y = Number(ymd[1]);
-      const mo = Number(ymd[2]);
-      const day = Number(ymd[3]);
-      return new Date(y, mo - 1, day, hh, mm, 0, 0);
-    }
-    const d = new Date(now);
-    d.setHours(hh, mm, 0, 0);
-    return d;
-  }, [useTestTime, testTime, testDate, now]);
+  const displayNow = now;
   const attendancePhase = useMemo(() => {
     if (!selectedOngoingEvent) return null;
 
@@ -165,12 +172,40 @@ export default function Home() {
     }
     const slotIn = usePmSlot ? pmIn : amIn;
     const slotOut = usePmSlot ? pmOut : amOut;
+    const slotGraceIn = usePmSlot
+      ? Number(selectedOngoingEvent.pm_grace_in ?? 0)
+      : Number(selectedOngoingEvent.am_grace_in ?? 0);
+    const graceSafe = Number.isFinite(slotGraceIn) && slotGraceIn > 0 ? slotGraceIn : 0;
 
     if (slotIn != null && nowMinutes < slotIn) {
       return {
         label: "Time In Not Yet Active",
         className: "text-amber-700",
         dotClassName: "bg-amber-500/80",
+      };
+    }
+
+    const timeInOnly =
+      String(selectedOngoingEvent.event_mode ?? "").trim().toUpperCase() === "TIME_IN_ONLY" ||
+      selectedOngoingEvent.time_in_only === true;
+
+    // After Late – Time In grace ends → Time In Cutoff (before Time Out window).
+    if (slotIn != null && nowMinutes > slotIn + graceSafe) {
+      if (timeInOnly || slotOut == null || nowMinutes < slotOut) {
+        return {
+          label: "Time In Cutoff",
+          className: "text-orange-700",
+          dotClassName: "bg-orange-500/80",
+        };
+      }
+    }
+
+    // Time-In Only: never switch the kiosk to Time Out.
+    if (timeInOnly) {
+      return {
+        label: "Time In",
+        className: "text-[#07713c]",
+        dotClassName: "bg-[#07713c]/80",
       };
     }
 
@@ -284,6 +319,15 @@ export default function Home() {
         return;
       }
 
+      if (status === "time_in_cutoff") {
+        toast.error(
+          message ||
+            "Time In Cutoff: attendance was not recorded. Student marked Absent.",
+        );
+        clearIdentifierInput();
+        return;
+      }
+
       toast.success(message || "Attendance submitted successfully.");
       clearIdentifierInput();
     },
@@ -312,12 +356,6 @@ export default function Home() {
         attendanceKind,
         ...(selectedOngoingEvent?.id != null ? { eventId: selectedOngoingEvent.id } : {}),
         ...(unlockToken ? { eventUnlockToken: unlockToken } : {}),
-        ...(useTestTime && (testTime || testDate)
-          ? {
-              ...(testTime ? { simulatedTapTime: testTime } : {}),
-              simulatedDate: testDate || new Date(now).toISOString().slice(0, 10),
-            }
-          : {}),
       };
       submitAttendance(payload);
     },
@@ -326,16 +364,95 @@ export default function Home() {
       hasOngoingEvent,
       isAttendanceUnlocked,
       isSubmittingAttendance,
-      now,
       selectedOngoingEvent?.id,
       submitAttendance,
-      testDate,
-      testTime,
       unlockToken,
-      useTestTime,
       userId,
     ],
   );
+
+  const clearHistoryView = useCallback(() => {
+    if (historyClearTimerRef.current) {
+      clearTimeout(historyClearTimerRef.current);
+      historyClearTimerRef.current = null;
+    }
+    if (historyAutoSubmitTimerRef.current) {
+      clearTimeout(historyAutoSubmitTimerRef.current);
+      historyAutoSubmitTimerRef.current = null;
+    }
+    setHistoryResult(null);
+    setHistoryIdentifier("");
+    setHistoryError("");
+    window.setTimeout(() => historyInputRef.current?.focus(), 0);
+  }, []);
+
+  const lookupHistory = useCallback(async (rawIdentifier?: string) => {
+    const identifier = String(rawIdentifier ?? historyIdentifier).replace(/\D/g, "").trim();
+    if (!identifier) {
+      setHistoryError("Enter a Student ID or tap an RFID card.");
+      return;
+    }
+    if (historyAutoSubmitTimerRef.current) {
+      clearTimeout(historyAutoSubmitTimerRef.current);
+      historyAutoSubmitTimerRef.current = null;
+    }
+    if (historyClearTimerRef.current) {
+      clearTimeout(historyClearTimerRef.current);
+      historyClearTimerRef.current = null;
+    }
+    setIsLookingUpHistory(true);
+    setHistoryError("");
+    try {
+      const result = await lookupPublicStudentAttendance(identifier);
+      setHistoryResult(result);
+    } catch (error) {
+      setHistoryResult(null);
+      setHistoryError(getApiErrorMessage(error, "Student not found."));
+    } finally {
+      setIsLookingUpHistory(false);
+    }
+  }, [historyIdentifier]);
+
+  useEffect(() => {
+    if (!historyResult) return;
+    if (historyClearTimerRef.current) clearTimeout(historyClearTimerRef.current);
+    historyClearTimerRef.current = setTimeout(() => {
+      clearHistoryView();
+    }, 6000);
+    return () => {
+      if (historyClearTimerRef.current) {
+        clearTimeout(historyClearTimerRef.current);
+        historyClearTimerRef.current = null;
+      }
+    };
+  }, [historyResult, clearHistoryView]);
+
+  useEffect(() => {
+    if (!historyResult) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [historyResult]);
+
+  useEffect(() => {
+    const identifier = historyIdentifier.replace(/\D/g, "").trim();
+    if (!identifier || isLookingUpHistory || historyResult) return;
+    if (identifier.length < MIN_AUTO_SUBMIT_LENGTH) return;
+
+    if (historyAutoSubmitTimerRef.current) clearTimeout(historyAutoSubmitTimerRef.current);
+    historyAutoSubmitTimerRef.current = setTimeout(() => {
+      void lookupHistory(identifier);
+    }, AUTO_SUBMIT_DEBOUNCE_MS);
+
+    return () => {
+      if (historyAutoSubmitTimerRef.current) {
+        clearTimeout(historyAutoSubmitTimerRef.current);
+        historyAutoSubmitTimerRef.current = null;
+      }
+    };
+  }, [historyIdentifier, isLookingUpHistory, historyResult, lookupHistory]);
 
   useEffect(() => {
     if (!hasOngoingEvent || detailEvent || showUpcomingModal) return;
@@ -367,7 +484,7 @@ export default function Home() {
   return (
     <main className="relative flex min-h-screen items-center justify-center bg-[#07713c]/[0.04] px-4 py-24 sm:px-8 lg:px-12 [&_button]:cursor-pointer">
       <Navbar showSettings />
-      <section className="relative w-full max-w-xl rounded-2xl border border-white/50 bg-white/92 px-5 py-6 sm:px-8 shadow-xl backdrop-blur-[2px] text-center">
+      <section className="relative w-full max-w-6xl rounded-2xl border border-white/50 bg-white/92 px-5 py-6 sm:px-8 shadow-xl backdrop-blur-[2px] text-center">
         <div className="mt-2 px-1 sm:px-3 flex justify-center">
           {isCurrentEventLoading ? (
             <div className="w-full max-w-md rounded-lg p-6 text-center">
@@ -396,7 +513,12 @@ export default function Home() {
               <p className="mt-2 text-2xl sm:text-3xl font-bold text-gray-900">{selectedOngoingEvent?.name || "—"}</p>
               <p className="mt-2 text-lg font-medium text-gray-700">{selectedOngoingEvent?.venue || "—"}</p>
               <p className="mt-1 whitespace-pre-line text-lg font-medium text-gray-700">{ongoingEventTimeDisplay}</p>
-              <p className="mt-3 text-xl sm:text-2xl font-bold text-[#07713c]">Status: {selectedOngoingEvent?.status || "Ongoing"}</p>
+              <p className="mt-3 text-xl sm:text-2xl font-bold text-[#07713c]">
+                Status:{" "}
+                {attendancePhase?.label === "Time In Cutoff"
+                  ? "Time In Cutoff"
+                  : selectedOngoingEvent?.status || "Ongoing"}
+              </p>
             </button>
           ) : (
             <div className="w-full max-w-md rounded-lg p-6 text-center">
@@ -404,10 +526,13 @@ export default function Home() {
                 <img
                   src={csgLogo}
                   alt="CSG Logo"
-                  className="h-20 w-20 object-contain"
+                  className="csg-logo-fx h-36 w-36 object-contain sm:h-44 sm:w-44"
                 />
               </div>
-              <p className="text-2xl font-bold text-gray-900">
+              <p className="text-center text-3xl font-extrabold uppercase tracking-wide text-[#ff7f00] sm:text-4xl">
+                CENTRAL STUDENT GOVERNMENT
+              </p>
+              <p className="mt-3 text-2xl font-bold text-gray-900">
                 {upcomingEvents.length > 0
                   ? "There is an upcoming event(s)."
                   : "No upcoming event"}
@@ -484,38 +609,6 @@ export default function Home() {
                 )}
               </div>
               <div className="flex flex-col gap-2">
-                <div className="rounded-lg border border-[#07713c]/25 bg-[#f1faf4] p-2.5">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label className="inline-flex items-center gap-2 text-xs font-medium text-[#07713c]">
-                      <input
-                        type="checkbox"
-                        checked={useTestTime}
-                        onChange={(e) => setUseTestTime(e.target.checked)}
-                      />
-                      Use test time
-                    </label>
-                    <input
-                      type="date"
-                      value={testDate}
-                      disabled={!useTestTime}
-                      onChange={(e) => setTestDate(e.target.value)}
-                      className="rounded-lg border border-[#07713c]/40 bg-white px-2.5 py-1.5 text-xs text-[#07713c] disabled:opacity-60"
-                    />
-                    <input
-                      type="time"
-                      value={testTime}
-                      disabled={!useTestTime}
-                      onChange={(e) => setTestTime(e.target.value)}
-                      className="rounded-lg border border-[#07713c]/40 bg-white px-2.5 py-1.5 text-xs text-[#07713c] disabled:opacity-60"
-                    />
-                    <span className="text-[11px] text-[#07713c]/80">
-                      {useTestTime && (testDate || testTime)
-                        ? `Simulated: ${testDate || "today"} ${testTime || "(current time)"}`
-                        : "Using real current time/date"}
-                      {useTestTime ? " · 00:00 = midnight (before AM window)." : ""}
-                    </span>
-                  </div>
-                </div>
                 <input
                   ref={identifierInputRef}
                   id="attendance-identifier"
@@ -553,6 +646,186 @@ export default function Home() {
             View Upcoming Events
           </button>
         </div>
+
+        <div className="mt-8 w-full rounded-2xl border border-[#07713c]/25 bg-white p-5 sm:p-6 shadow-sm">
+          <div className="mx-auto max-w-xl text-center">
+            <h2 className="text-lg font-bold text-[#0f172a]">Check my attendance</h2>
+            <p className="mt-1 text-sm text-gray-600">
+              Tap your ID card or enter your Student ID / RFID to view attendance for all events.
+            </p>
+            <div className="mt-4">
+              <input
+                ref={historyInputRef}
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                value={historyIdentifier}
+                onChange={(e) => {
+                  setHistoryIdentifier(e.target.value.replace(/\D/g, ""));
+                  if (historyError) setHistoryError("");
+                  if (historyResult) setHistoryResult(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void lookupHistory(historyIdentifier);
+                }}
+                placeholder="Student ID or RFID — loads automatically"
+                className="w-full rounded-lg border border-[#07713c]/40 bg-white px-3 py-2.5 text-center text-sm text-[#0f172a] placeholder:text-gray-400 focus:border-[#07713c] focus:outline-none focus:ring-2 focus:ring-[#07713c]/20"
+              />
+              {isLookingUpHistory ? (
+                <p className="mt-2 text-sm text-gray-500">Looking up attendance...</p>
+              ) : null}
+            </div>
+            {historyError ? (
+              <p className="mt-3 text-sm font-medium text-red-600">{historyError}</p>
+            ) : null}
+          </div>
+        </div>
+
+        {historyResult ? (
+          <div
+            className="fixed inset-0 z-[180] flex items-stretch justify-center bg-black/45 p-3 pt-[4.5rem] sm:p-4 sm:pt-20"
+            role="dialog"
+            aria-modal="true"
+            aria-label="My attendance"
+          >
+            <div className="flex h-full max-h-[calc(100dvh-5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-[#07713c]/30 bg-white shadow-2xl">
+              <div className="shrink-0 space-y-3 border-b border-[#07713c]/15 px-4 py-3 sm:px-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-base font-bold text-[#0f172a] sm:text-lg">My attendance</h2>
+                  <button
+                    type="button"
+                    onClick={clearHistoryView}
+                    className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-[#0f172a] hover:bg-gray-50"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#07713c]/20 bg-[#07713c]/[0.04] p-3">
+                  <div className="min-w-0 flex-1 text-center sm:text-left">
+                    <p className="text-base font-extrabold tabular-nums tracking-tight text-[#055a2e] sm:text-lg">
+                      ID: {historyResult.student.studentId}
+                      {historyResult.student.yearLevel != null
+                        ? ` · Year ${historyResult.student.yearLevel}`
+                        : ""}
+                    </p>
+                  </div>
+                  <div className="grid w-full grid-cols-2 gap-2 text-center text-sm sm:w-auto sm:grid-cols-4">
+                    <div className="rounded-lg border border-gray-200 bg-white px-3 py-1.5">
+                      <p className="text-[10px] text-gray-500">Events</p>
+                      <p className="font-bold tabular-nums">{historyResult.summary.totalEvents}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-white px-3 py-1.5">
+                      <p className="text-[10px] text-gray-500">Present</p>
+                      <p className="font-bold tabular-nums text-[#07713c]">{historyResult.summary.attended}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-white px-3 py-1.5">
+                      <p className="text-[10px] text-gray-500">Absent</p>
+                      <p className="font-bold tabular-nums text-red-600">{historyResult.summary.missed}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-white px-3 py-1.5">
+                      <p className="text-[10px] text-gray-500">Total fines</p>
+                      <p className="font-bold tabular-nums text-[#0f172a]">
+                        ₱
+                        {historyResult.events
+                          .reduce((sum, ev) => sum + (Number(ev.finePhp) || 0), 0)
+                          .toLocaleString("en-PH")}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto px-3 py-3 sm:px-4 [scrollbar-width:thin]">
+                <div className="overflow-x-auto rounded-xl border border-[#07713c]/25">
+                  <table className="w-full min-w-[720px] text-sm">
+                    <thead className="sticky top-0 z-10 bg-[#07713c] text-white">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold sm:px-4">Event</th>
+                        <th className="whitespace-nowrap px-3 py-2 text-left font-semibold sm:px-4">Date</th>
+                        <th className="whitespace-nowrap px-3 py-2 text-center font-semibold sm:px-4">Session</th>
+                        <th className="whitespace-nowrap px-3 py-2 text-center font-semibold sm:px-4">Attendance</th>
+                        <th className="px-3 py-2 text-left font-semibold sm:px-4">Time records</th>
+                        <th className="min-w-[6rem] whitespace-nowrap px-3 py-2 text-right font-semibold sm:px-4">
+                          Fine
+                        </th>
+                        <th className="whitespace-nowrap px-3 py-2 text-center font-semibold sm:px-4">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historyResult.events.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                            No event attendance records found for this student.
+                          </td>
+                        </tr>
+                      ) : (
+                        historyResult.events.map((ev) => {
+                          const timeLabel =
+                            ev.sessionType === "Whole day"
+                              ? `AM ${ev.amTimeIn ?? "—"} / ${ev.amTimeOut ?? "—"} · PM ${ev.pmTimeIn ?? "—"} / ${ev.pmTimeOut ?? "—"}`
+                              : `In ${ev.timeIn ?? "—"} · Out ${ev.timeOut ?? "—"}`;
+                          const fine = Number(ev.finePhp) || 0;
+                          const paymentStatus = ev.paymentStatus ?? null;
+                          const paymentClass =
+                            paymentStatus === "Paid"
+                              ? "bg-green-100 text-green-800"
+                              : paymentStatus === "Partial"
+                                ? "bg-amber-100 text-amber-800"
+                                : paymentStatus === "Waived"
+                                  ? "bg-sky-100 text-sky-800"
+                                  : paymentStatus === "Unpaid"
+                                    ? "bg-red-100 text-red-700"
+                                    : "bg-gray-100 text-gray-600";
+                          return (
+                            <tr key={ev.eventId} className="border-t border-[#07713c]/15">
+                              <td className="px-3 py-2 font-medium text-[#0f172a] sm:px-4">{ev.name}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-[#0f172a] sm:px-4">
+                                {formatEventDateForDisplay(ev.date)}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-center text-[#0f172a] sm:px-4">
+                                {ev.sessionType}
+                              </td>
+                              <td className="px-3 py-2 text-center sm:px-4">
+                                <span
+                                  className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                    ev.attended
+                                      ? "bg-green-100 text-green-800"
+                                      : "bg-red-100 text-red-700"
+                                  }`}
+                                >
+                                  {ev.attended ? "Present" : "Absent"}
+                                </span>
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-700 sm:px-4">
+                                {timeLabel}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums text-[#0f172a] sm:px-4">
+                                ₱{fine.toLocaleString("en-PH")}
+                              </td>
+                              <td className="px-3 py-2 text-center sm:px-4">
+                                <span
+                                  className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${paymentClass}`}
+                                >
+                                  {paymentStatus ?? "—"}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="shrink-0 border-t border-[#07713c]/15 px-4 py-2.5 text-center text-xs text-gray-500 sm:px-5">
+                Returning to landing page in a few seconds…
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {ongoingEvents.length > 1 && (
           <PaginationBar
