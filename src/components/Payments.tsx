@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import SidebarNavIcon from "./SidebarNavIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
-import UserCircleIcon from "./UserCircleIcon";
 import SidebarUserFullName from "./SidebarUserFullName";
 import PaginationBar from "./PaginationBar";
-import { useGovernorScope } from "../hooks/useGovernorScope";
-import { getDashboardRoleLabel, getFullNameFromSession, getNavDisplayNameFromSession, isCsgPresident } from "../utils/roles";
+import { getFullNameFromSession, getNavDisplayNameFromSession } from "../utils/roles";
 import { useAuthSession } from "../hooks/auth";
 import { formatEventDateForDisplay } from "../hooks/useGetEvents";
-import { lookupPaymentStudent, useGetPaymentStudent, useGetPaymentSummary, useGetPayments, useGetPaymentTransactions } from "../hooks/useGetPayments";
-import { useRecordPayment } from "../hooks/useRecordPayment";
-import { getAppNavItems } from "../utils/appNav";
+import { lookupPaymentStudent, useGetPaymentStudent, useGetPaymentSummary, useGetPayments, useGetPaymentTransactions, type PaymentStudentMatch } from "../hooks/useGetPayments";
+import { useDeletePaymentTransaction, useRecordPayment } from "../hooks/useRecordPayment";
+import { useAppNavItems, useMyPermissions } from "../hooks/useMyPermissions";
 import { formatCourseWithMajor } from "../utils/courseMajorDisplay";
+import { getApiErrorMessage } from "../types/api";
 import { downloadPdfTable } from "../utils/downloadPdfTable";
-import csgLogo from "../assets/CSG LOGO.jpg";
+import csgLogo from "../assets/csg1.png";
 import type {
   DeskPageProps,
   EnrichedPaymentStudent,
@@ -240,15 +239,12 @@ type PaymentsPageProps = DeskPageProps;
 
 export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
   const { data: session } = useAuthSession();
-  const { role, isGovernor, governorScope } = useGovernorScope();
-  void getDashboardRoleLabel(isGovernor, governorScope, role);
   const encoderDisplayName =
     getFullNameFromSession(session) || getNavDisplayNameFromSession(session) || "—";
-  const normalizedRole = String(role || "").toLowerCase().trim();
-  const isAdmin = normalizedRole === "admin";
-  const isSuperAdmin = normalizedRole === "super_admin";
-  const isCsg = isCsgPresident(normalizedRole);
-  const navItems = getAppNavItems({ isAdmin: isAdmin || isSuperAdmin, isSuperAdmin, isCsgPresident: isCsg });
+  const navItems = useAppNavItems();
+  const { has: hasPermission, isSuperAdmin } = useMyPermissions();
+  const canRecordPayment = hasPermission("action.payment.record");
+  const canDeletePayment = isSuperAdmin || hasPermission("action.payment.delete");
   const { data: paymentSummary } = useGetPaymentSummary();
   const { data: paymentTransactions = [], isLoading: isTransactionsLoading, isError: isTransactionsError } =
     useGetPaymentTransactions() as {
@@ -257,11 +253,13 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
       isError: boolean;
     };
   const recordPaymentMutation = useRecordPayment();
+  const deletePaymentMutation = useDeletePaymentTransaction();
 
   const [showPayStudentModal, setShowPayStudentModal] = useState(false);
   const [payFlowStep, setPayFlowStep] = useState("search");
   const [payFlowStudentId, setPayFlowStudentId] = useState("");
   const [addStudentIdentifier, setAddStudentIdentifier] = useState("");
+  const [addStudentMatches, setAddStudentMatches] = useState<PaymentStudentMatch[]>([]);
   const [addStudentError, setAddStudentError] = useState("");
   const [isAddingStudent, setIsAddingStudent] = useState(false);
   const [transactionSearch, setTransactionSearch] = useState("");
@@ -273,6 +271,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
   const [paymentError, setPaymentError] = useState("");
   const [lastReceipt, setLastReceipt] = useState<PaymentReceipt | null>(null);
   const [selectedTransaction, setSelectedTransaction] = useState<PaymentTransaction | null>(null);
+  const [deleteError, setDeleteError] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
   const [exportSearch, setExportSearch] = useState("");
   const [exportStatusFilter, setExportStatusFilter] = useState("All");
@@ -280,8 +279,6 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
   const [exportCourseFilter, setExportCourseFilter] = useState("all");
   const [exportYearFilter, setExportYearFilter] = useState("all");
   const [exportBalanceFilter, setExportBalanceFilter] = useState("all");
-  const [showLogout, setShowLogout] = useState(false);
-
   const { data: paymentRowsFromApi = [], isLoading: isExportListLoading } = useGetPayments({
     enabled: exportOpen,
   });
@@ -420,6 +417,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
     setPayFlowStep("search");
     setPayFlowStudentId("");
     setAddStudentIdentifier("");
+    setAddStudentMatches([]);
     setAddStudentError("");
     setPaymentAmountInput("");
     setPaymentError("");
@@ -435,29 +433,43 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
     setPayFlowStep("search");
     setPayFlowStudentId("");
     setAddStudentIdentifier("");
+    setAddStudentMatches([]);
     setAddStudentError("");
     setPaymentAmountInput("");
     setPaymentError("");
   };
 
+  const selectPayFlowStudent = useCallback((studentId: string) => {
+    const id = String(studentId ?? "").trim();
+    if (!id) return;
+    setAddStudentMatches([]);
+    setAddStudentError("");
+    setPayFlowStudentId(id);
+    setPayFlowStep("review");
+    setPaymentAmountInput("");
+    setPaymentError("");
+  }, []);
+
   const handleAddStudent = useCallback(async (rawIdentifier?: string) => {
     const identifier = String(rawIdentifier ?? addStudentIdentifier ?? "").trim();
     if (!identifier) {
-      setAddStudentError("Enter a Student ID or RFID.");
+      setAddStudentError("Enter a Student ID, RFID, or name.");
       return;
     }
     setIsAddingStudent(true);
     setAddStudentError("");
+    setAddStudentMatches([]);
     try {
-      const student = await lookupPaymentStudent(identifier);
-      if (!student?.studentId) {
-        setAddStudentError("Student not found or access denied.");
+      const result = await lookupPaymentStudent(identifier);
+      if (result.student?.studentId) {
+        selectPayFlowStudent(result.student.studentId);
         return;
       }
-      setPayFlowStudentId(student.studentId);
-      setPayFlowStep("review");
-      setPaymentAmountInput("");
-      setPaymentError("");
+      if (result.matches.length > 0) {
+        setAddStudentMatches(result.matches);
+        return;
+      }
+      setAddStudentError("Student not found or access denied.");
     } catch (error: unknown) {
       const message =
         typeof error === "object" &&
@@ -470,7 +482,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
     } finally {
       setIsAddingStudent(false);
     }
-  }, [addStudentIdentifier]);
+  }, [addStudentIdentifier, selectPayFlowStudent]);
 
   useEffect(() => {
     if (!showPayStudentModal || payFlowStep !== "search") return;
@@ -574,6 +586,22 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
     window.setTimeout(() => w.print(), 250);
   };
 
+  const deleteSelectedTransaction = async () => {
+    if (!selectedTransaction?.id || !canDeletePayment) return;
+    const code = selectedTransaction.transactionCode || String(selectedTransaction.id);
+    const confirmed = window.confirm(
+      `Delete payment ${code}?\n\nThis removes the transaction and restores the student's fine balances. This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    setDeleteError("");
+    try {
+      await deletePaymentMutation.mutateAsync(Number(selectedTransaction.id));
+      setSelectedTransaction(null);
+    } catch (err) {
+      setDeleteError(getApiErrorMessage(err, "Unable to delete this payment."));
+    }
+  };
+
   const exportPaymentsCsv = () => {
     const header = ["Student ID", "Student Name", "Course", "Year", "Total Events", "Total Fine", "Paid Amount", "Remaining", "Status"];
     const body = exportFilteredRows.map((row: PaymentExportRow) => [
@@ -632,66 +660,16 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate?.(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                item.id === "payment" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav items={navItems} activeNavId="payment" onNavigate={onNavigate} />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="bg-white border-b border-[#07713c]/30 px-6 py-4">
-          <div className="mx-auto flex w-full max-w-7xl items-start justify-between gap-4">
+          <div className="mx-auto w-full max-w-7xl">
             <div>
               <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">Payments</h1>
               <NavbarAcademicPeriod className="mt-1" />
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setExportOpen(true)}
-                className="rounded-lg border bg-[#07713C] px-3 py-2 text-sm font-medium text-white"
-              >
-                Export / Reports
-              </button>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowLogout((prev) => !prev)}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#07713c]"
-                  aria-label="Account menu"
-                  aria-expanded={showLogout}
-                  aria-haspopup="true"
-                  title="Profile"
-                >
-                  <UserCircleIcon />
-                </button>
-                {showLogout && (
-                  <div className="absolute right-0 top-full mt-1 min-w-[100px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowLogout(false);
-                        onLogout?.();
-                      }}
-                      className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                    >
-                      Logout
-                    </button>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </header>
@@ -709,7 +687,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
               >
                 {summaryAmountsVisible ? <EyeOffIcon /> : <EyeOpenIcon />}
               </button>
-              <p className="text-2xl font-bold text-black pr-8">{formatPhpMaybeHidden(summaryAmountsVisible, totals.total)}</p>
+              <p className="text-2xl font-bold text-[#055a2e] pr-8">{formatPhpMaybeHidden(summaryAmountsVisible, totals.total)}</p>
               <p className="text-sm font-medium text-black">Ledger Total</p>
             </div>
             <div className="relative bg-white rounded-lg border border-[#07713c]/30 p-4 shadow-sm">
@@ -717,13 +695,13 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                 type="button"
                 onClick={() => setSummaryAmountsVisible((v) => !v)}
                 className="absolute top-3 right-3 rounded-md p-1 text-black/50 hover:bg-[#07713c]/10 hover:text-[#07713c]"
-                aria-label={summaryAmountsVisible ? "Hide collected amount" : "Show collected amount"}
+                aria-label={summaryAmountsVisible ? "Hide paid amount" : "Show paid amount"}
                 title={summaryAmountsVisible ? "Hide amount" : "Show amount"}
               >
                 {summaryAmountsVisible ? <EyeOffIcon /> : <EyeOpenIcon />}
               </button>
-              <p className="text-2xl font-bold text-black pr-8">{formatPhpMaybeHidden(summaryAmountsVisible, totals.paid)}</p>
-              <p className="text-sm font-medium text-black">Collected</p>
+              <p className="text-2xl font-bold text-blue-600 pr-8">{formatPhpMaybeHidden(summaryAmountsVisible, totals.paid)}</p>
+              <p className="text-sm font-medium text-black">Paid Amount</p>
             </div>
             <div className="relative bg-white rounded-lg border border-[#07713c]/30 p-4 shadow-sm">
               <button
@@ -735,11 +713,11 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
               >
                 {summaryAmountsVisible ? <EyeOffIcon /> : <EyeOpenIcon />}
               </button>
-              <p className="text-2xl font-bold text-black pr-8">{formatPhpMaybeHidden(summaryAmountsVisible, totals.unpaid)}</p>
+              <p className="text-2xl font-bold text-red-600 pr-8">{formatPhpMaybeHidden(summaryAmountsVisible, totals.unpaid)}</p>
               <p className="text-sm font-medium text-black">Outstanding</p>
             </div>
             <div className="bg-white rounded-lg border border-[#07713c]/30 p-4 shadow-sm">
-              <p className="text-2xl font-bold text-black">{studentsWithBalance}</p>
+              <p className="text-2xl font-bold text-[#07713c]">{studentsWithBalance}</p>
               <p className="text-sm font-medium text-black">Students with Balance</p>
             </div>
           </div>
@@ -776,13 +754,15 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                 <h2 className="text-lg font-bold text-black">Payment Transactions</h2>
                 <p className="text-sm text-black/75">Recorded payments only. Click a row to view details or print a receipt. Use + New Payment to post a new transaction.</p>
               </div>
-              <button
-                type="button"
-                onClick={openPayStudentModal}
-                className="rounded-lg border bg-[#07713C] px-4 py-2 text-sm font-semibold text-white"
-              >
-                + New Payment
-              </button>
+              {canRecordPayment ? (
+                <button
+                  type="button"
+                  onClick={openPayStudentModal}
+                  className="rounded-lg border bg-[#07713C] px-4 py-2 text-sm font-semibold text-white"
+                >
+                  + New Payment
+                </button>
+              ) : null}
             </div>
 
             <div className="p-4 border-b border-[#07713c]/20">
@@ -828,10 +808,14 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                         key={row.id ?? row.transactionCode}
                         role="button"
                         tabIndex={0}
-                        onClick={() => setSelectedTransaction(row)}
+                        onClick={() => {
+                          setDeleteError("");
+                          setSelectedTransaction(row);
+                        }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
+                            setDeleteError("");
                             setSelectedTransaction(row);
                           }
                         }}
@@ -887,18 +871,20 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
             {payFlowStep === "search" ? (
               <>
                 <div className="p-5 space-y-4">
-                  <p className="text-sm text-black/75">Search by Student ID or RFID. The student is not saved on this page — only the payment transaction is recorded.</p>
+                  <p className="text-sm text-black/75">
+                    Search by Student ID, RFID, or name. The student is not saved on this page — only the payment transaction is recorded.
+                  </p>
                   <label className="block text-sm text-black">
-                    <span className="mb-1 block font-semibold">Student ID or RFID</span>
+                    <span className="mb-1 block font-semibold">Student ID, RFID, or Name</span>
                     <input
                       ref={addStudentInputRef}
                       type="text"
-                      inputMode="numeric"
                       autoComplete="off"
                       value={addStudentIdentifier}
                       onChange={(e) => {
-                        setAddStudentIdentifier(e.target.value.replace(/\D/g, ""));
+                        setAddStudentIdentifier(e.target.value);
                         if (addStudentError) setAddStudentError("");
+                        if (addStudentMatches.length) setAddStudentMatches([]);
                       }}
                       onKeyDown={(e) => {
                         if (e.key !== "Enter") return;
@@ -909,13 +895,41 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                         }
                         handleAddStudent(addStudentIdentifier);
                       }}
-                      placeholder="Tap or enter Student ID / RFID"
+                      placeholder="Tap ID / enter Student ID or type a name"
                       className="w-full rounded-lg border border-[#07713c]/40 px-3 py-2 text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
                       autoFocus
                     />
                   </label>
                   {addStudentError ? <p className="text-sm font-medium text-black">{addStudentError}</p> : null}
                   {isAddingStudent ? <p className="text-sm text-black/75">Searching student...</p> : null}
+                  {addStudentMatches.length > 0 ? (
+                    <div className="rounded-xl border border-[#07713c]/25 overflow-hidden">
+                      <p className="bg-[#07713c]/10 px-3 py-2 text-xs font-semibold text-black">
+                        {addStudentMatches.length} students found — select one
+                      </p>
+                      <ul className="max-h-64 overflow-y-auto divide-y divide-[#07713c]/15">
+                        {addStudentMatches.map((match) => (
+                          <li key={match.studentId}>
+                            <button
+                              type="button"
+                              onClick={() => selectPayFlowStudent(match.studentId)}
+                              className="w-full px-3 py-2.5 text-left hover:bg-[#07713c]/8 focus:bg-[#07713c]/10 focus:outline-none"
+                            >
+                              <p className="text-sm font-semibold text-black">{match.studentName}</p>
+                              <p className="text-xs text-black/70">
+                                ID: {match.studentId}
+                                {" · "}
+                                {match.department || "—"}
+                                {" · "}
+                                Year {match.year || "—"}
+                                {match.course && match.course !== "—" ? ` · ${match.course}` : ""}
+                              </p>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="px-5 py-3 border-t border-[#07713c]/20 flex justify-end gap-2 shrink-0">
                   <button type="button" onClick={closePayStudentModal} className="px-4 py-2 rounded-lg border border-[#07713c]/30 text-black hover:bg-gray-50">
@@ -1003,6 +1017,10 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
 
                       <div className="rounded-xl border border-[#07713c]/25 bg-gray-50 p-4 space-y-3">
                         <p className="text-sm font-semibold uppercase tracking-wide text-black/80">Record Payment</p>
+                        {!canRecordPayment ? (
+                          <p className="text-sm text-black/70">Your role cannot record payments.</p>
+                        ) : (
+                          <>
                         <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-black">
                           <span>Current balance</span>
                           <span className="font-semibold tabular-nums">{formatPhp(payFlowStudent.remaining)}</span>
@@ -1046,6 +1064,8 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                           <span className="font-bold tabular-nums text-[#07713c]">{formatPhp(payFlowPreviewNewBalance)}</span>
                         </div>
                         {paymentError ? <p className="text-sm font-medium text-black">{paymentError}</p> : null}
+                          </>
+                        )}
                       </div>
                     </>
                   )}
@@ -1057,6 +1077,8 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                       setPayFlowStep("search");
                       setPayFlowStudentId("");
                       setAddStudentIdentifier("");
+                      setAddStudentMatches([]);
+                      setAddStudentError("");
                       setPaymentAmountInput("");
                       setPaymentError("");
                     }}
@@ -1071,7 +1093,7 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                     <button
                       type="button"
                       onClick={handleSubmitPayment}
-                      disabled={!payFlowStudent || payFlowStudent.remaining <= 0 || recordPaymentMutation.isPending}
+                      disabled={!canRecordPayment || !payFlowStudent || payFlowStudent.remaining <= 0 || recordPaymentMutation.isPending}
                       className="px-4 py-2 rounded-lg border border-[#07713c] bg-[#07713c] font-semibold text-white hover:bg-[#055a2e] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {recordPaymentMutation.isPending ? "Saving..." : "Save Payment"}
@@ -1293,6 +1315,8 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                 </div>
               ) : null}
 
+              {deleteError ? <p className="text-sm text-red-700">{deleteError}</p> : null}
+
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
                   type="button"
@@ -1301,9 +1325,22 @@ export default function Payments({ onNavigate, onLogout }: PaymentsPageProps) {
                 >
                   Print Receipt
                 </button>
+                {canDeletePayment ? (
+                  <button
+                    type="button"
+                    disabled={deletePaymentMutation.isPending || !selectedTransaction.id}
+                    onClick={() => void deleteSelectedTransaction()}
+                    className="rounded-lg border border-red-600 bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                  >
+                    {deletePaymentMutation.isPending ? "Deleting…" : "Delete Payment"}
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  onClick={() => setSelectedTransaction(null)}
+                  onClick={() => {
+                    setDeleteError("");
+                    setSelectedTransaction(null);
+                  }}
                   className="rounded-lg border border-[#07713c]/30 px-4 py-2 text-sm text-black hover:bg-gray-50"
                 >
                   Close

@@ -47,8 +47,23 @@ export function studentMatchesDepartmentCodes(departmentName: unknown, departmen
   return code ? departmentCodes.includes(code) : false;
 }
 
-/** Governor role → department codes from the database. */
+/** Department codes used when filtering roster data for a governor’s college. */
+export const DEPARTMENT_CODES_BY_LOOKUP: Record<string, string[]> = {
+  CIT: ["CIT", "BSIT"],
+  BSIT: ["CIT", "BSIT"],
+  CBA: ["CBA"],
+  CEAS: ["CEAS"],
+  CCJE: ["CCJE", "COC"],
+  COC: ["CCJE", "COC"],
+  CHM: ["CHM"],
+};
+
+/**
+ * @deprecated Legacy per-college roles. Prefer unified `governor` + department_id.
+ * Kept so old sessions still filter correctly until re-login.
+ */
 export const GOVERNOR_ROLE_TO_DEPARTMENT_CODES: Record<string, string[]> = {
+  governor: [],
   it_governor: ["CIT", "BSIT"],
   cba_governor: ["CBA"],
   ceas_governor: ["CEAS"],
@@ -56,15 +71,15 @@ export const GOVERNOR_ROLE_TO_DEPARTMENT_CODES: Record<string, string[]> = {
   chm_governor: ["CHM"],
 };
 
-/** Department code → governor role for create-account. */
+/** All governors use the unified role; department is chosen separately. */
 export const DEPARTMENT_CODE_TO_GOVERNOR_ROLE: Record<string, string> = {
-  CIT: "it_governor",
-  BSIT: "it_governor",
-  CBA: "cba_governor",
-  CEAS: "ceas_governor",
-  CCJE: "coc_governor",
-  COC: "coc_governor",
-  CHM: "chm_governor",
+  CIT: "governor",
+  BSIT: "governor",
+  CBA: "governor",
+  CEAS: "governor",
+  CCJE: "governor",
+  COC: "governor",
+  CHM: "governor",
 };
 
 export const DEPARTMENTS_EXCLUDED_FROM_SELECT = ["graduate school"];
@@ -76,7 +91,10 @@ export function isDepartmentExcludedFromSelect(departmentName: unknown): boolean
 }
 
 export function departmentCodeMatchesGovernorRole(departmentCode: unknown, roleKey: string): boolean {
-  const codes = GOVERNOR_ROLE_TO_DEPARTMENT_CODES[roleKey] ?? [];
+  const normalizedRole = String(roleKey ?? "").toLowerCase();
+  // Unified governor may manage any college (scoped by their own department_id on the API).
+  if (normalizedRole === "governor") return true;
+  const codes = GOVERNOR_ROLE_TO_DEPARTMENT_CODES[normalizedRole] ?? [];
   const normalizedCode = String(departmentCode ?? "").trim().toUpperCase();
   return codes.includes(normalizedCode);
 }
