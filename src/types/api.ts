@@ -29,6 +29,9 @@ export type AuthUser = {
   username?: string;
   full_name?: string;
   fullName?: string;
+  department_id?: number | null;
+  department_code?: string | null;
+  department_name?: string | null;
   data?: { role?: string };
 };
 
@@ -54,9 +57,19 @@ export type AuthSession = {
   username?: string;
   full_name?: string;
   fullName?: string;
+  department_id?: number | null;
+  department_code?: string | null;
+  department_name?: string | null;
   user?: AuthUser;
   activeAcademicPeriod?: AcademicPeriodRecord | null;
-  data?: { role?: string; user?: AuthUser; username?: string; full_name?: string };
+  data?: {
+    role?: string;
+    user?: AuthUser;
+    username?: string;
+    full_name?: string;
+    department_code?: string;
+    department_name?: string;
+  };
   profile?: { role?: string; full_name?: string };
   me?: { role?: string };
   claims?: { role?: string };
@@ -77,5 +90,7 @@ export type UserRecord = {
   fullName?: string;
   role?: string;
   department?: string;
+  department_id?: number | null;
+  department_name?: string | null;
   major?: string;
 };
