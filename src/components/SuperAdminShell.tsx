@@ -2,13 +2,12 @@
  * Reusable shell layout for Super Admin pages.
  * Provides the green sidebar (with all nav items) and header.
  */
-import { useState } from "react";
-import SidebarNavIcon from "./SidebarNavIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
-import UserCircleIcon from "./UserCircleIcon";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
-import { getAppNavItems, type AppNavId } from "../utils/appNav";
+import type { AppNavId } from "../utils/appNav";
+import { useAppNavItems } from "../hooks/useMyPermissions";
 import type { DeskPageProps } from "../types/desk-pages";
 
 type Props = DeskPageProps & {
@@ -28,32 +27,15 @@ export default function SuperAdminShell({
   children,
   headerRight,
 }: Props) {
-  const [showLogout, setShowLogout] = useState(false);
-  const navItems = getAppNavItems({ isAdmin: true, isSuperAdmin: true });
+  const navItems = useAppNavItems();
 
   return (
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       {/* Sidebar */}
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1 pb-4">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate?.(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                item.id === activeNavId
-                  ? "bg-[#055a2e] text-white"
-                  : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav items={navItems} activeNavId={activeNavId} onNavigate={onNavigate} />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       {/* Main */}
@@ -75,30 +57,7 @@ export default function SuperAdminShell({
               )}
               <NavbarAcademicPeriod className="mt-1" />
             </div>
-            <div className="flex items-center gap-3">
-              {headerRight}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowLogout((prev) => !prev)}
-                  className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg"
-                  aria-label="Account menu"
-                >
-                  <UserCircleIcon />
-                </button>
-                {showLogout && (
-                  <div className="absolute right-0 top-full mt-1 py-1 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[120px] z-10">
-                    <button
-                      type="button"
-                      onClick={() => { setShowLogout(false); onLogout?.(); }}
-                      className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                    >
-                      Logout
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
+            {headerRight ? <div className="flex items-center gap-3">{headerRight}</div> : null}
           </div>
         </header>
 

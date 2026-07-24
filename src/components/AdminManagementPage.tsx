@@ -2,8 +2,20 @@ import { useMemo, useState } from "react";
 import SuperAdminShell from "./SuperAdminShell";
 import CreateUserModal from "./CreateUserModal";
 import { useDeleteUser, useUpdateUser, useUsersList } from "../hooks/useUsersManagement";
+import { useMyPermissions } from "../hooks/useMyPermissions";
+import { useAuthSession } from "../hooks/auth";
 import { getApiErrorMessage, type UserRecord } from "../types/api";
 import type { DeskPageProps } from "../types/desk-pages";
+import api from "../api/axiosInstance";
+import {
+  getCashierAccountLabel,
+  getRoleFromSession,
+  isAdminRole,
+  isCashierRole,
+  isCsgPresident,
+  isDepartmentGovernorRole,
+  isSuperAdminRole,
+} from "../utils/roles";
 
 type UserEditForm = { fullName: string; username: string; password: string };
 type UpdatePayload = { fullName?: string; username?: string; password?: string };
@@ -11,14 +23,20 @@ type UpdatePayload = { fullName?: string; username?: string; password?: string }
 const TH = "px-3 py-2.5 text-left align-middle font-bold text-white text-xs uppercase tracking-wide";
 const TD = "px-3 py-2 text-left leading-snug text-black text-sm";
 
-function roleBadge(role: string | undefined) {
-  const r = String(role ?? "").toLowerCase();
+function roleBadge(user: UserRecord) {
+  const r = String(user.role ?? "").toLowerCase();
   const base = "inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold";
   if (r === "super_admin") return <span className={`${base} bg-amber-100 text-amber-800 ring-1 ring-amber-200`}>Super Admin</span>;
   if (r === "admin") return <span className={`${base} bg-green-100 text-green-800 ring-1 ring-green-200`}>Admin</span>;
   if (r === "csg_president") return <span className={`${base} bg-blue-100 text-blue-800 ring-1 ring-blue-200`}>CSG President</span>;
-  if (r.includes("governor")) return <span className={`${base} bg-purple-100 text-purple-800 ring-1 ring-purple-200`}>{role}</span>;
-  return <span className={`${base} bg-gray-100 text-gray-700`}>{role ?? "—"}</span>;
+  if (r === "csg_cashier" || r === "dept_cashier" || r === "cashier") {
+    const label = getCashierAccountLabel(user);
+    return <span className={`${base} bg-teal-100 text-teal-800 ring-1 ring-teal-200`}>{label}</span>;
+  }
+  if (r === "governor" || r.includes("governor")) {
+    return <span className={`${base} bg-purple-100 text-purple-800 ring-1 ring-purple-200`}>Governor</span>;
+  }
+  return <span className={`${base} bg-gray-100 text-gray-700`}>{user.role ?? "—"}</span>;
 }
 
 export default function AdminManagementPage(props: DeskPageProps) {
@@ -30,7 +48,44 @@ export default function AdminManagementPage(props: DeskPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterRole, setFilterRole] = useState("all");
 
-  const { data: users = [], isLoading, refetch } = useUsersList(true);
+  const { has: hasPermission, isSuperAdmin } = useMyPermissions();
+  const { data: session } = useAuthSession();
+  const viewerRole = getRoleFromSession(session);
+  const canMutateUsers = hasPermission("action.users.manage");
+  const canViewUsers =
+    hasPermission("nav.users") || hasPermission("nav.users.list") || canMutateUsers;
+  const [revealedPasswords, setRevealedPasswords] = useState<
+    Record<string, { loading?: boolean; value?: string | null; note?: string }>
+  >({});
+  const [visiblePasswordIds, setVisiblePasswordIds] = useState<Record<string, boolean>>({});
+
+  const revealPassword = async (userId: string | number) => {
+    const key = String(userId);
+    if (revealedPasswords[key]?.value != null || revealedPasswords[key]?.note) {
+      setVisiblePasswordIds((prev) => ({ ...prev, [key]: !prev[key] }));
+      return;
+    }
+    setRevealedPasswords((prev) => ({ ...prev, [key]: { loading: true } }));
+    try {
+      const res = await api.get(`/users/${userId}/password`);
+      const recoverable = Boolean(res.data?.recoverable);
+      const password = res.data?.password != null ? String(res.data.password) : null;
+      setRevealedPasswords((prev) => ({
+        ...prev,
+        [key]: recoverable && password
+          ? { value: password }
+          : { value: null, note: "Not recoverable — set a new password to enable viewing." },
+      }));
+      setVisiblePasswordIds((prev) => ({ ...prev, [key]: true }));
+    } catch (err) {
+      setRevealedPasswords((prev) => ({
+        ...prev,
+        [key]: { value: null, note: getApiErrorMessage(err, "Could not load password.") },
+      }));
+    }
+  };
+
+  const { data: users = [], isLoading, refetch } = useUsersList(canViewUsers);
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
 
@@ -39,12 +94,22 @@ export default function AdminManagementPage(props: DeskPageProps) {
     return [...users]
       .sort((a, b) => Number(a.id) - Number(b.id))
       .filter((u) => {
-        const matchesRole = filterRole === "all" || String(u.role ?? "").toLowerCase() === filterRole;
+        const role = String(u.role ?? "").toLowerCase();
+        const cashierLabel = isCashierRole(role) ? getCashierAccountLabel(u).toLowerCase() : "";
+        const matchesRole =
+          filterRole === "all" ||
+          role === filterRole ||
+          (filterRole === "governor" && (role === "governor" || role.endsWith("_governor"))) ||
+          (filterRole === "dept_cashier" &&
+            (role === "dept_cashier" || (role === "cashier" && cashierLabel === "dept cashier"))) ||
+          (filterRole === "csg_cashier" &&
+            (role === "csg_cashier" || (role === "cashier" && cashierLabel === "csg cashier")));
         const matchesSearch =
           !q ||
           String(u.username ?? "").toLowerCase().includes(q) ||
           String(u.full_name ?? "").toLowerCase().includes(q) ||
-          String(u.role ?? "").toLowerCase().includes(q);
+          String(u.role ?? "").toLowerCase().includes(q) ||
+          cashierLabel.includes(q);
         return matchesRole && matchesSearch;
       });
   }, [users, searchQuery, filterRole]);
@@ -90,25 +155,38 @@ export default function AdminManagementPage(props: DeskPageProps) {
     });
   };
 
-  const roleOptions = [
-    { value: "all", label: "All Roles" },
-    { value: "super_admin", label: "Super Admin" },
-    { value: "admin", label: "Admin" },
-    { value: "csg_president", label: "CSG President" },
-    { value: "it_governor", label: "IT Governor" },
-    { value: "cba_governor", label: "CBA Governor" },
-    { value: "ceas_governor", label: "CEAS Governor" },
-    { value: "coc_governor", label: "COC Governor" },
-    { value: "chm_governor", label: "CHM Governor" },
-  ];
+  const roleOptions = useMemo(() => {
+    const options = [
+      { value: "all", label: "All Roles" },
+      { value: "super_admin", label: "Super Admin" },
+      { value: "admin", label: "Admin" },
+      { value: "csg_president", label: "CSG President" },
+      { value: "governor", label: "Governor" },
+      { value: "dept_cashier", label: "Dept Cashier" },
+      { value: "csg_cashier", label: "CSG Cashier" },
+    ];
+    if (isSuperAdminRole(viewerRole)) return options;
+    if (isAdminRole(viewerRole)) {
+      return options.filter((opt) => opt.value !== "super_admin");
+    }
+    if (
+      isCsgPresident(viewerRole) ||
+      isDepartmentGovernorRole(viewerRole) ||
+      isCashierRole(viewerRole)
+    ) {
+      return options.filter((opt) => opt.value !== "super_admin" && opt.value !== "admin");
+    }
+    return options;
+  }, [viewerRole]);
 
   return (
     <SuperAdminShell
       {...props}
       activeNavId="admin_management"
-      pageTitle="Admin Management"
+      pageTitle="List"
       pageSubtitle="View and manage all user accounts across the system"
       headerRight={
+        canMutateUsers ? (
         <button
           type="button"
           onClick={() => setCreateOpen(true)}
@@ -116,6 +194,7 @@ export default function AdminManagementPage(props: DeskPageProps) {
         >
           + Add User
         </button>
+        ) : undefined
       }
     >
       {/* Filters */}
@@ -209,11 +288,35 @@ export default function AdminManagementPage(props: DeskPageProps) {
                             className="w-full rounded border border-[#07713c]/40 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
                             placeholder="New password"
                           />
+                        ) : isSuperAdmin && user.id != null ? (
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs text-black">
+                                {revealedPasswords[String(user.id)]?.loading
+                                  ? "…"
+                                  : visiblePasswordIds[String(user.id)] && revealedPasswords[String(user.id)]?.value
+                                    ? revealedPasswords[String(user.id)]?.value
+                                    : "••••••••"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void revealPassword(user.id!)}
+                                className="rounded border border-[#07713c]/40 px-2 py-0.5 text-[11px] font-medium text-black hover:bg-[#07713c]/10"
+                              >
+                                {visiblePasswordIds[String(user.id)] && revealedPasswords[String(user.id)]?.value
+                                  ? "Hide"
+                                  : "View"}
+                              </button>
+                            </div>
+                            {revealedPasswords[String(user.id)]?.note ? (
+                              <span className="text-[10px] text-black/60">{revealedPasswords[String(user.id)]?.note}</span>
+                            ) : null}
+                          </div>
                         ) : (
                           <span className="text-[#36454F]/50">••••••••</span>
                         )}
                       </td>
-                      <td className={TD}>{roleBadge(user.role)}</td>
+                      <td className={TD}>{roleBadge(user)}</td>
                       <td className={`${TD} truncate max-w-[120px]`} title={(user as { department_name?: string }).department_name || user.department || "—"}>
                         {(user as { department_name?: string }).department_name || user.department || "—"}
                       </td>
@@ -236,7 +339,7 @@ export default function AdminManagementPage(props: DeskPageProps) {
                               Cancel
                             </button>
                           </div>
-                        ) : (
+                        ) : canMutateUsers ? (
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
@@ -254,6 +357,8 @@ export default function AdminManagementPage(props: DeskPageProps) {
                               Remove
                             </button>
                           </div>
+                        ) : (
+                          <span className="text-[#36454F]/50">—</span>
                         )}
                       </td>
                     </tr>

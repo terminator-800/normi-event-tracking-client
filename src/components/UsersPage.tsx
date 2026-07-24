@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import SidebarNavIcon from "./SidebarNavIcon";
+import AppSidebarNav from "./AppSidebarNav";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
-import UserCircleIcon from "./UserCircleIcon";
 import CreateUserModal from "./CreateUserModal";
-import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel } from "../utils/roles";
-import { useGovernorScope } from "../hooks/useGovernorScope";
-import { useDeleteUser, useUpdateUser, useUsersList } from "../hooks/useUsersManagement";
+import { useAppNavItems, useMyPermissions } from "../hooks/useMyPermissions";
 import { getApiErrorMessage, type UserRecord } from "../types/api";
 import type { DeskPageProps } from "../types/desk-pages";
+import { getCashierAccountLabel, getDashboardRoleLabel } from "../utils/roles";
+import { useGovernorScope } from "../hooks/useGovernorScope";
+import { useDeleteUser, useUpdateUser, useUsersList } from "../hooks/useUsersManagement";
+import api from "../api/axiosInstance";
 
 type ManagedUserRecord = UserRecord & {
+  department_id?: number | null;
   department_name?: string;
 };
 
@@ -31,37 +32,73 @@ type UserUpdatePayload = {
 /** Users page main content text (sidebar + top header excluded). */
 const USERS_PAGE_TEXT = "text-black";
 const USERS_TH_TEXT = "font-bold text-black";
-const TABLE_CELL_NOWRAP = "[&_th]:whitespace-nowrap [&_tbody_td]:whitespace-nowrap";
+const TABLE_CELL_NOWRAP =
+  "[&_th]:whitespace-nowrap [&_th]:!text-center [&_tbody_td]:whitespace-nowrap [&_tbody_td]:!text-center";
 
 export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
   const { role, isGovernor, governorScope } = useGovernorScope();
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
   const normalizedRole = String(role || "").toLowerCase().trim();
-  const isAdmin = normalizedRole === "admin";
   const isSuperAdmin = normalizedRole === "super_admin";
-  const canManage = isAdmin || isSuperAdmin;
-  const [showLogout, setShowLogout] = useState(false);
+  const { has: hasPermission } = useMyPermissions();
+  const canManage = hasPermission("nav.users") || hasPermission("action.users.manage");
   const [createOpen, setCreateOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | number | null>(null);
   const [editForm, setEditForm] = useState<UserEditForm>({ fullName: "", username: "", password: "" });
   const [actionError, setActionError] = useState("");
   const [actionSuccess, setActionSuccess] = useState("");
+  const [revealedPasswords, setRevealedPasswords] = useState<
+    Record<string, { loading?: boolean; value?: string | null; note?: string }>
+  >({});
+  const [visiblePasswordIds, setVisiblePasswordIds] = useState<Record<string, boolean>>({});
 
+  const revealPassword = async (userId: string | number) => {
+    const key = String(userId);
+    if (revealedPasswords[key]?.value != null || revealedPasswords[key]?.note) {
+      setVisiblePasswordIds((prev) => ({ ...prev, [key]: !prev[key] }));
+      return;
+    }
+    setRevealedPasswords((prev) => ({ ...prev, [key]: { loading: true } }));
+    try {
+      const res = await api.get(`/users/${userId}/password`);
+      const recoverable = Boolean(res.data?.recoverable);
+      const password = res.data?.password != null ? String(res.data.password) : null;
+      setRevealedPasswords((prev) => ({
+        ...prev,
+        [key]: recoverable && password
+          ? { value: password }
+          : { value: null, note: "Not recoverable — set a new password to enable viewing." },
+      }));
+      setVisiblePasswordIds((prev) => ({ ...prev, [key]: true }));
+    } catch (err) {
+      setRevealedPasswords((prev) => ({
+        ...prev,
+        [key]: { value: null, note: getApiErrorMessage(err, "Could not load password.") },
+      }));
+    }
+  };
   const { data: users = [], isLoading, refetch } = useUsersList(canManage);
   const updateUserMutation = useUpdateUser();
   const deleteUserMutation = useDeleteUser();
 
-  const navItems = getAppNavItems({ isAdmin: canManage, isSuperAdmin });
+  const navItems = useAppNavItems();
+  const canMutateUsers = canManage && hasPermission("action.users.manage");
 
   const sortedUsers = useMemo(
     () => [...users].sort((a, b) => Number(a.id) - Number(b.id)),
     [users],
   );
 
-  const roleLabelForUsersPage = (rawRole: string | undefined) => {
-    const normalized = String(rawRole || "").trim().toLowerCase();
-    if (normalized === "coc_governor") return "ccje_governor";
-    return rawRole;
+  const roleLabelForUsersPage = (user: ManagedUserRecord) => {
+    const normalized = String(user.role || "").trim().toLowerCase();
+    if (normalized === "governor" || normalized.endsWith("_governor")) return "Governor";
+    if (normalized === "cashier" || normalized === "csg_cashier" || normalized === "dept_cashier") {
+      return getCashierAccountLabel(user);
+    }
+    if (normalized === "csg_president") return "CSG President";
+    if (normalized === "super_admin") return "Super Admin";
+    if (normalized === "admin") return "Admin";
+    return user.role;
   };
 
   useEffect(() => {
@@ -121,61 +158,23 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col [&_p]:text-white">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate?.(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                item.id === "users" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav items={navItems} activeNavId="users" onNavigate={onNavigate} />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="border-b border-[#07713c]/30 bg-white px-6 py-4">
-          <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
+          <div className="mx-auto w-full max-w-7xl">
             <div>
               <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#07713c] leading-tight">
                 User Management
               </h1>
               <NavbarAcademicPeriod className="mt-1" />
             </div>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowLogout((prev) => !prev)}
-                className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg"
-                aria-label="Account menu"
-              >
-                <UserCircleIcon />
-              </button>
-              {showLogout && (
-                <div className="absolute right-0 top-full mt-1 py-1 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[100px] z-10">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowLogout(false);
-                      onLogout?.();
-                    }}
-                    className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                  >
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
           </div>
         </header>
 
-        <main className={`flex-1 overflow-auto p-6 ${USERS_PAGE_TEXT} [&_th]:font-bold [&_th]:!text-white`}>
+        <main className={`flex-1 overflow-auto p-6 ${USERS_PAGE_TEXT} [&_th]:font-bold [&_th]:!text-center [&_th]:!text-white`}>
           <div className="mx-auto w-full min-w-0 max-w-7xl">
             <section className="min-w-0 overflow-hidden rounded-lg border border-[#07713c]/30 bg-white shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#07713c]/20 px-4 pb-3 pt-4">
@@ -187,7 +186,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                       : "You can view users, but only admin can edit."}
                   </p>
                 </div>
-                {canManage && (
+                {canMutateUsers && (
                   <button
                     type="button"
                     onClick={() => setCreateOpen(true)}
@@ -204,28 +203,28 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
               </div>
 
               <div className="min-w-0 overflow-x-auto">
-                <table className={`w-full min-w-0 table-fixed text-sm font-[Inter,sans-serif] ${TABLE_CELL_NOWRAP}`}>
-                  <thead className={`border-b border-[#07713c]/30 bg-[#07713c] text-xs uppercase tracking-wide ${USERS_TH_TEXT}`}>
+                <table className={`w-full min-w-0 table-fixed text-center text-sm font-[Inter,sans-serif] ${TABLE_CELL_NOWRAP}`}>
+                  <thead className={`border-b border-[#07713c]/30 bg-[#07713c] !text-center text-xs uppercase tracking-wide ${USERS_TH_TEXT}`}>
                     <tr>
-                      <th className="w-[7%] px-3 py-2.5 text-left align-middle">ID</th>
-                      <th className="w-[18%] px-3 py-2.5 text-left align-middle">Full Name</th>
-                      <th className="w-[14%] px-3 py-2.5 text-left align-middle">Username</th>
-                      <th className="w-[14%] px-3 py-2.5 text-left align-middle">Password</th>
-                      <th className="w-[16%] px-3 py-2.5 text-left align-middle">Role</th>
-                      <th className="w-[19%] px-3 py-2.5 text-left align-middle">Department</th>
-                      <th className="px-3 py-2.5 text-left align-middle">Actions</th>
+                      <th className="w-[7%] px-3 py-2.5 !text-center align-middle">ID</th>
+                      <th className="w-[18%] px-3 py-2.5 !text-center align-middle">Full Name</th>
+                      <th className="w-[14%] px-3 py-2.5 !text-center align-middle">Username</th>
+                      <th className="w-[14%] px-3 py-2.5 !text-center align-middle">Password</th>
+                      <th className="w-[16%] px-3 py-2.5 !text-center align-middle">Role</th>
+                      <th className="w-[19%] px-3 py-2.5 !text-center align-middle">Department</th>
+                      <th className="px-3 py-2.5 !text-center align-middle">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {isLoading ? (
                       <tr>
-                        <td className="px-3 py-3 text-sm text-black/85" colSpan={7}>
+                        <td className="px-3 py-3 text-center text-sm text-black/85" colSpan={7}>
                           Loading users...
                         </td>
                       </tr>
                     ) : sortedUsers.length === 0 ? (
                       <tr>
-                        <td className="px-3 py-3 text-sm text-black/85" colSpan={7}>
+                        <td className="px-3 py-3 text-center text-sm text-black/85" colSpan={7}>
                           No users found.
                         </td>
                       </tr>
@@ -234,14 +233,14 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                         const isEditing = editingUserId === user.id;
                         return (
                           <tr key={user.id} className="border-b border-[#07713c]/15 hover:bg-gray-50">
-                            <td className="px-3 py-1.5 text-left leading-snug text-black">{user.id}</td>
-                            <td className="px-3 py-1.5 text-left leading-snug text-black">
+                            <td className="px-3 py-1.5 text-center leading-snug text-black">{user.id}</td>
+                            <td className="px-3 py-1.5 text-center leading-snug text-black">
                               {isEditing ? (
                                 <input
                                   type="text"
                                   value={editForm.fullName}
                                   onChange={(e) => setEditForm((prev) => ({ ...prev, fullName: e.target.value }))}
-                                  className="w-full rounded-lg border border-[#07713c]/40 bg-white px-2.5 py-1.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                                  className="w-full rounded-lg border border-[#07713c]/40 bg-white px-2.5 py-1.5 text-center text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
                                   placeholder="Enter full name"
                                 />
                               ) : (
@@ -250,13 +249,13 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                                 </span>
                               )}
                             </td>
-                            <td className="px-3 py-1.5 text-left leading-snug text-black">
+                            <td className="px-3 py-1.5 text-center leading-snug text-black">
                               {isEditing ? (
                                 <input
                                   type="text"
                                   value={editForm.username}
                                   onChange={(e) => setEditForm((prev) => ({ ...prev, username: e.target.value }))}
-                                  className="w-full rounded-lg border border-[#07713c]/40 bg-white px-2.5 py-1.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                                  className="w-full rounded-lg border border-[#07713c]/40 bg-white px-2.5 py-1.5 text-center text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
                                 />
                               ) : (
                                 <span className="block truncate" title={user.username}>
@@ -264,30 +263,58 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                                 </span>
                               )}
                             </td>
-                            <td className="px-3 py-1.5 text-left leading-snug text-black">
-                              {isEditing && isAdmin ? (
+                            <td className="px-3 py-1.5 text-center leading-snug text-black">
+                              {isEditing && canMutateUsers ? (
                                 <input
                                   type="password"
                                   value={editForm.password}
                                   onChange={(e) => setEditForm((prev) => ({ ...prev, password: e.target.value }))}
-                                  className="w-full rounded-lg border border-[#07713c]/40 bg-white px-2.5 py-1.5 text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
+                                  className="w-full rounded-lg border border-[#07713c]/40 bg-white px-2.5 py-1.5 text-center text-sm text-black focus:border-[#07713c] focus:outline-none focus:ring-1 focus:ring-[#07713c]/30"
                                   placeholder="Enter new password"
                                 />
+                              ) : isSuperAdmin && user.id != null ? (
+                                <div className="flex flex-col items-center gap-1">
+                                  <div className="flex items-center justify-center gap-2">
+                                    <span className="font-mono text-xs text-black">
+                                      {revealedPasswords[String(user.id)]?.loading
+                                        ? "…"
+                                        : visiblePasswordIds[String(user.id)] &&
+                                            revealedPasswords[String(user.id)]?.value
+                                          ? revealedPasswords[String(user.id)]?.value
+                                          : "••••••••"}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => void revealPassword(user.id!)}
+                                      className="rounded border border-[#07713c]/40 px-2 py-0.5 text-[11px] font-medium text-black hover:bg-[#07713c]/10"
+                                    >
+                                      {visiblePasswordIds[String(user.id)] &&
+                                      revealedPasswords[String(user.id)]?.value
+                                        ? "Hide"
+                                        : "View"}
+                                    </button>
+                                  </div>
+                                  {revealedPasswords[String(user.id)]?.note ? (
+                                    <span className="text-[10px] text-black/60">
+                                      {revealedPasswords[String(user.id)]?.note}
+                                    </span>
+                                  ) : null}
+                                </div>
                               ) : (
                                 <span className="text-black/65">••••••••</span>
                               )}
                             </td>
-                            <td className="px-3 py-1.5 text-left leading-snug text-black truncate" title={roleLabelForUsersPage(user.role)}>
-                              {roleLabelForUsersPage(user.role)}
+                            <td className="px-3 py-1.5 text-center leading-snug text-black truncate" title={roleLabelForUsersPage(user)}>
+                              {roleLabelForUsersPage(user)}
                             </td>
-                            <td className="px-3 py-1.5 text-left leading-snug text-black truncate" title={user.department_name || user.department || "-"}>
+                            <td className="px-3 py-1.5 text-center leading-snug text-black truncate" title={user.department_name || user.department || "-"}>
                               {user.department_name || user.department || "-"}
                             </td>
-                            <td className="px-3 py-1.5 text-left">
-                              {!isAdmin ? (
+                            <td className="px-3 py-1.5 text-center">
+                              {!canMutateUsers ? (
                                 <span className="text-xs text-black/60">View only</span>
                               ) : isEditing ? (
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center justify-center gap-2">
                                   <button
                                     type="button"
                                     onClick={saveEdit}
@@ -308,7 +335,7 @@ export default function UsersPage({ onNavigate, onLogout }: DeskPageProps) {
                                   </button>
                                 </div>
                               ) : (
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center justify-center gap-2">
                                   <button
                                     type="button"
                                     onClick={() => startEdit(user)}
