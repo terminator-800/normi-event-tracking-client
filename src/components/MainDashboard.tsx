@@ -1,20 +1,20 @@
-import { useMemo, useState } from "react";
-import SidebarNavIcon from "./SidebarNavIcon";
+import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+import AppSidebarNav from "./AppSidebarNav";
 import SidebarBrand from "./SidebarBrand";
 import SidebarUserFullName from "./SidebarUserFullName";
-import UserCircleIcon from "./UserCircleIcon";
 import NavbarAcademicPeriod from "./NavbarAcademicPeriod";
-import { getAppNavItems } from "../utils/appNav";
-import { getDashboardRoleLabel, getNavDisplayNameFromSession, isSuperAdminRole, isAdminRole, isCsgPresident } from "../utils/roles";
+import { getDashboardRoleLabel, getNavDisplayNameFromSession, isSuperAdminRole } from "../utils/roles";
 import { useAuthSession } from "../hooks/auth";
+import { useAppNavItems } from "../hooks/useMyPermissions";
 import { useGovernorScope } from "../hooks/useGovernorScope";
 import { useGetEvents, formatEventDateForDisplay } from "../hooks/useGetEvents";
 import { useSuperAdminStats } from "../hooks/useSuperAdminData";
-import EventCard from "./EventCard";
 import { Chart as ChartJS, type ChartOptions } from "chart.js/auto";
 import { Line, Doughnut } from "react-chartjs-2";
 import type { DeskPageProps } from "../types/desk-pages";
 import type { DisplayEvent } from "../types/events";
+import { liveEventPath } from "../utils/appNav";
 
 void ChartJS;
 
@@ -37,15 +37,46 @@ function parseStartEndFromTimeSlots(timeSlots: string | null | undefined) {
   return { start: ranges[0].start, end: ranges[ranges.length - 1].end };
 }
 
-function UpcomingEventStrip({ ev, onOpen }: { ev: DisplayEvent; onOpen: () => void }) {
+function isLiveEventStatus(status: string | null | undefined): boolean {
+  const n = String(status || "").trim().toLowerCase();
+  return n === "ongoing" || n === "active";
+}
+
+function DashboardEventStrip({
+  ev,
+  onOpen,
+  variant = "upcoming",
+}: {
+  ev: DisplayEvent;
+  onOpen: () => void;
+  variant?: "live" | "upcoming";
+}) {
   const { start, end } = parseStartEndFromTimeSlots(ev.timeSlots);
+  const isLive = variant === "live";
   return (
     <button
       type="button"
       onClick={onOpen}
-      aria-label={`View full details for ${ev.name || "event"}`}
-      className="group w-full rounded-xl bg-[#C8E6C9] px-5 py-5 sm:px-8 shadow-md text-left transition hover:brightness-[0.97] hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#008000] focus-visible:ring-offset-2"
+      aria-label={
+        isLive
+          ? `Open live attendance for ${ev.name || "event"}`
+          : `Open attendance page for ${ev.name || "event"}`
+      }
+      className={`group w-full rounded-xl px-5 py-5 sm:px-8 shadow-md text-left transition hover:brightness-[0.97] hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
+        isLive
+          ? "bg-[#07713c] text-white focus-visible:ring-[#07713c]"
+          : "bg-[#C8E6C9] focus-visible:ring-[#008000]"
+      }`}
     >
+      {isLive && (
+        <p className="mb-3 inline-flex items-center gap-1.5 text-xs font-semibold text-red-200">
+          <span className="relative inline-flex h-2 w-2" aria-hidden="true">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400/80" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+          </span>
+          Live now
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-6">
         {[
           { label: "Event", value: ev.name || "—" },
@@ -53,18 +84,34 @@ function UpcomingEventStrip({ ev, onOpen }: { ev: DisplayEvent; onOpen: () => vo
           { label: "Start time", value: start },
           { label: "End time", value: end },
           { label: "Venue", value: ev.venue || "—" },
-          { label: "Status", value: ev.status || "—", bold: true },
+          { label: "Status", value: isLive ? "Ongoing" : ev.status || "—", bold: true },
         ].map((col) => (
           <div key={col.label} className="min-w-0 text-left">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-[#36454F]/65">{col.label}</p>
-            <p className={`mt-1.5 text-sm text-gray-900 leading-snug break-words ${col.bold ? "font-bold" : "font-medium"}`}>
+            <p
+              className={`text-[10px] font-semibold uppercase tracking-wide ${
+                isLive ? "text-white/70" : "text-[#36454F]/65"
+              }`}
+            >
+              {col.label}
+            </p>
+            <p
+              className={`mt-1.5 text-sm leading-snug break-words ${
+                isLive ? "text-white" : "text-gray-900"
+              } ${col.bold ? "font-bold" : "font-medium"}`}
+            >
               {col.value}
             </p>
           </div>
         ))}
       </div>
-      <p className="mt-3 text-center text-[11px] text-[#36454F]/50 group-hover:text-[#36454F]/70">
-        Click for full details
+      <p
+        className={`mt-3 text-center text-[11px] ${
+          isLive
+            ? "text-white/70 group-hover:text-white"
+            : "text-[#36454F]/50 group-hover:text-[#36454F]/70"
+        }`}
+      >
+        Open live attendance
       </p>
     </button>
   );
@@ -103,16 +150,26 @@ function SectionHeading({ title, subtitle }: { title: string; subtitle?: string 
 }
 
 export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
+  const navigate = useNavigate();
   const { data: apiEvents = [] } = useGetEvents();
   const { data: session } = useAuthSession();
   const { role, isGovernor, governorScope } = useGovernorScope();
 
   const normalizedRole = String(role ?? "").toLowerCase().trim();
   const isSuperAdmin = isSuperAdminRole(normalizedRole);
-  const isAdmin = isAdminRole(normalizedRole);
-  const isCsg = isCsgPresident(normalizedRole);
 
   const { data: superAdminStats } = useSuperAdminStats(isSuperAdmin);
+
+  const openLiveAttendance = (ev: DisplayEvent) => {
+    const id = ev.id ?? ev._id;
+    navigate(liveEventPath(id));
+  };
+
+  const liveEvents = useMemo(() => {
+    return [...apiEvents]
+      .filter((e) => isLiveEventStatus(e.status))
+      .sort((a, b) => eventDateMs(a.date) - eventDateMs(b.date));
+  }, [apiEvents]);
 
   const upcomingEvents = useMemo(() => {
     const norm = (s: string | undefined) => String(s || "").toLowerCase();
@@ -126,14 +183,14 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
     const norm = (s: string | undefined) => String(s || "").toLowerCase();
     const total = list.length;
     const upcoming = list.filter((e) => norm(e.status) === "upcoming").length;
-    const active = list.filter((e) => norm(e.status) === "active").length;
+    const active = list.filter((e) => isLiveEventStatus(e.status)).length;
     const completed = list.filter((e) => norm(e.status) === "completed").length;
     const mandatory = list.filter((e) => e.is_mandatory).length;
     const allDept = list.filter((e) => e.is_all_departments).length;
     return [
       { label: "Total Events", value: total, sub: "All periods", color: "text-[#008000]" },
       { label: "Upcoming", value: upcoming, sub: "Scheduled", color: "text-blue-600" },
-      { label: "Active", value: active, sub: "In progress", color: "text-orange-600" },
+      { label: "Live", value: active, sub: "In progress", color: "text-orange-600" },
       { label: "Completed", value: completed, sub: "Past events", color: "text-green-700" },
       { label: "Mandatory", value: mandatory, sub: "Required attendance", color: "text-gray-800" },
       { label: "All Departments", value: allDept, sub: "Open to everyone", color: "text-gray-800" },
@@ -141,7 +198,7 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
   }, [apiEvents]);
 
   const overviewLineData = useMemo(() => ({
-    labels: ["Total", "Upcoming", "Active", "Completed", "Mandatory", "All Depts"],
+    labels: ["Total", "Upcoming", "Live", "Completed", "Mandatory", "All Depts"],
     datasets: [
       {
         label: "Event Overview",
@@ -204,10 +261,6 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
     [],
   );
 
-  const [showLogout, setShowLogout] = useState(false);
-  const [showEventDetailModal, setShowEventDetailModal] = useState(false);
-  const [selectedUpcomingEvent, setSelectedUpcomingEvent] = useState<DisplayEvent | null>(null);
-
   const roleLabel = getDashboardRoleLabel(isGovernor, governorScope, role);
   const sessionDisplayName = getNavDisplayNameFromSession(session);
   const headerName = sessionDisplayName
@@ -216,29 +269,19 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
     ? "Welcome, Super Admin"
     : `Welcome, ${roleLabel}`;
 
-  const navItems = getAppNavItems({ isAdmin: isAdmin || isSuperAdmin, isSuperAdmin, isCsgPresident: isCsg });
+  const navItems = useAppNavItems();
 
   return (
     <div className="flex min-h-screen bg-gray-50 [&_button]:cursor-pointer">
       {/* Sidebar */}
       <aside className="sticky top-0 h-screen max-h-screen w-64 shrink-0 self-start overflow-y-auto bg-[#07713C] text-white flex flex-col">
         <SidebarBrand />
-        <nav className="flex-1 px-4 space-y-1 pb-4">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate?.(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-                item.id === "dashboard" ? "bg-[#055a2e] text-white" : "text-green-100 hover:bg-white/15"
-              }`}
-            >
-              <SidebarNavIcon navId={item.id} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <SidebarUserFullName />
+        <AppSidebarNav
+          items={navItems}
+          activeNavId="dashboard"
+          onNavigate={onNavigate}
+        />
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       {/* Main content */}
@@ -252,36 +295,12 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
                 </h1>
                 <NavbarAcademicPeriod className="mt-1" />
               </div>
-              <div className="flex items-center gap-3">
-                {isSuperAdmin && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                    Super Admin
-                  </span>
-                )}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setShowLogout((prev) => !prev)}
-                    className="inline-flex h-11 w-11 items-center justify-center text-[#07713c] rounded-lg"
-                    aria-label="Account menu"
-                    aria-expanded={showLogout}
-                  >
-                    <UserCircleIcon />
-                  </button>
-                  {showLogout && (
-                    <div className="absolute right-0 top-full mt-1 py-1 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[120px] z-10">
-                      <button
-                        type="button"
-                        onClick={() => { setShowLogout(false); onLogout?.(); }}
-                        className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                      >
-                        Logout
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
+              {isSuperAdmin ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  Super Admin
+                </span>
+              ) : null}
             </header>
         </div>
         <main className="flex-1 py-6 px-2 max-w-7xl mx-auto overflow-auto bg-[#f6f8f9]">
@@ -358,6 +377,34 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
             </>
           )}
 
+          {/* ── Live events ── */}
+          <section className="mb-6">
+            <SectionHeading
+              title="Live Event"
+              subtitle={
+                isSuperAdmin
+                  ? "Ongoing events across the system — open to start attendance"
+                  : "Ongoing now — open to start attendance"
+              }
+            />
+            {liveEvents.length > 0 ? (
+              <div className="space-y-3">
+                {liveEvents.slice(0, 5).map((ev) => (
+                  <DashboardEventStrip
+                    key={ev.id ?? `live-${ev.name}-${ev.date}`}
+                    ev={ev}
+                    variant="live"
+                    onOpen={() => openLiveAttendance(ev)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-5 py-8 text-center text-sm text-[#36454F]/65">
+                No live event right now.
+              </div>
+            )}
+          </section>
+
           {/* ── Upcoming events ── */}
           <section className="mb-6">
             <SectionHeading
@@ -367,13 +414,11 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
             {upcomingEvents.length > 0 ? (
               <div className="space-y-3">
                 {upcomingEvents.slice(0, 5).map((ev) => (
-                  <UpcomingEventStrip
+                  <DashboardEventStrip
                     key={ev.id ?? `${ev.name}-${ev.date}`}
                     ev={ev}
-                    onOpen={() => {
-                      setSelectedUpcomingEvent(ev);
-                      setShowEventDetailModal(true);
-                    }}
+                    variant="upcoming"
+                    onOpen={() => openLiveAttendance(ev)}
                   />
                 ))}
               </div>
@@ -412,9 +457,10 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
               <SectionHeading title="Quick Actions" subtitle="Super Admin shortcuts" />
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
-                  { label: "Admin Management", nav: "admin_management", desc: "Manage admin accounts", color: "border-[#07713C]/40 hover:bg-green-50" },
-                  { label: "Roles & Permissions", nav: "roles_permissions", desc: "Configure access control", color: "border-blue-200 hover:bg-blue-50" },
-                  { label: "System Settings", nav: "system_settings", desc: "Configure the system", color: "border-orange-200 hover:bg-orange-50" },
+                  { label: "List", nav: "admin_management", desc: "Manage admin accounts", color: "border-[#07713C]/40 hover:bg-green-50" },
+                  { label: "Role Permission", nav: "roles_permissions", desc: "Configure access control", color: "border-blue-200 hover:bg-blue-50" },
+                  { label: "Role List", nav: "roles_list", desc: "Assign user roles", color: "border-indigo-200 hover:bg-indigo-50" },
+                  { label: "School Year", nav: "system_settings", desc: "Manage academic periods", color: "border-orange-200 hover:bg-orange-50" },
                   { label: "Audit Logs", nav: "audit_logs", desc: "View system activity", color: "border-purple-200 hover:bg-purple-50" },
                 ].map((action) => (
                   <button
@@ -432,39 +478,6 @@ export default function MainDashboard({ onLogout, onNavigate }: DeskPageProps) {
           )}
         </main>
       </div>
-
-      {/* Event detail modal */}
-      {showEventDetailModal && selectedUpcomingEvent && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 px-4 py-6"
-          role="presentation"
-          onClick={() => setShowEventDetailModal(false)}
-        >
-          <div
-            className="relative flex max-h-[min(92vh,960px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="event-detail-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex shrink-0 flex-col gap-0.5 border-b border-gray-100 bg-[#f8faf8] px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <h3 id="event-detail-title" className="text-base font-semibold text-[#36454F]">
-                Event Details
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowEventDetailModal(false)}
-                className="mt-2 rounded-lg px-4 py-2 text-sm font-medium text-gray-700 hover:bg-white hover:shadow-sm sm:mt-0"
-              >
-                Close
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6">
-              <EventCard variant="modalHorizontal" event={selectedUpcomingEvent} />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

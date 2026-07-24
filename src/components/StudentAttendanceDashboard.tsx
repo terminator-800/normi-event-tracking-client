@@ -58,6 +58,8 @@ type StudentHistoryEvent = {
   sessionType?: string;
   attended?: boolean;
   finePhp?: number;
+  eventMode?: string;
+  timeInOnly?: boolean;
   timeIn?: string | null;
   timeOut?: string | null;
   checkIn?: string | null;
@@ -130,12 +132,21 @@ function parseStudentAlert(raw: unknown): StudentAlert {
 function parseStudentHistoryEvent(raw: unknown): StudentHistoryEvent {
   if (!raw || typeof raw !== "object") return {};
   const o = raw as Record<string, unknown>;
+  const fineRaw = o.finePhp ?? o.fine_php;
+  const fineN = fineRaw != null ? Number(fineRaw) : NaN;
+  const mode = String(o.eventMode ?? o.event_mode ?? "").trim().toUpperCase();
+  const timeInOnly =
+    o.timeInOnly === true ||
+    o.time_in_only === true ||
+    mode === "TIME_IN_ONLY";
   return {
     name: o.name != null ? String(o.name) : undefined,
     date: o.date != null ? String(o.date) : undefined,
     sessionType: o.sessionType != null ? String(o.sessionType) : undefined,
     attended: o.attended === true || o.attended === 1,
-    finePhp: typeof o.finePhp === "number" ? o.finePhp : undefined,
+    finePhp: Number.isFinite(fineN) ? fineN : undefined,
+    eventMode: mode || undefined,
+    timeInOnly,
     timeIn: o.timeIn != null ? String(o.timeIn) : null,
     timeOut: o.timeOut != null ? String(o.timeOut) : null,
     checkIn: o.checkIn != null ? String(o.checkIn) : null,
@@ -417,26 +428,40 @@ function normalizeHistoryEvent(ev: StudentHistoryEvent) {
 }
 
 /**
- * Single-session events (AM/PM): 2 slots (in/out). Whole day: AM in/out + PM in/out (4 slots).
- * Absent: all expected slots missing (single = 2×, whole = 4× base penalty).
+ * Prefer server fine totals (already exclude Time Out fines for TIME_IN_ONLY).
+ * Fallback client estimate: Time-In Only only counts Time In slots (no Time Out penalty).
  */
+function isHistoryTimeInOnly(ev: StudentHistoryEvent | null | undefined): boolean {
+  if (!ev) return false;
+  if (ev.timeInOnly === true) return true;
+  return String(ev.eventMode ?? "").trim().toUpperCase() === "TIME_IN_ONLY";
+}
+
 function getEventFinePhp(ev: StudentHistoryEvent | null | undefined) {
-  if (ev != null && typeof ev.finePhp === "number" && ev.finePhp > 0) {
-    return ev.finePhp;
+  if (ev != null && ev.finePhp != null && Number.isFinite(Number(ev.finePhp))) {
+    return Math.max(0, Number(ev.finePhp));
   }
   const n = normalizeHistoryEvent(ev ?? {});
+  const timeInOnly = isHistoryTimeInOnly(ev);
   if (!n.attended) {
-    return n.sessionType !== "Whole day"
-      ? PENALTY_MISSING_TIME_RECORD_PHP * 2
-      : PENALTY_MISSING_TIME_RECORD_PHP * 4;
+    if (n.sessionType !== "Whole day") {
+      // AM/PM only: Time-In Only → 1 slot; Time In/Out → 2 slots
+      return PENALTY_MISSING_TIME_RECORD_PHP * (timeInOnly ? 1 : 2);
+    }
+    // Whole day: Time-In Only → AM in + PM in; otherwise 4 slots
+    return PENALTY_MISSING_TIME_RECORD_PHP * (timeInOnly ? 2 : 4);
   }
   if (n.sessionType !== "Whole day") {
     let fine = 0;
     if (!String(n.timeIn ?? "").trim()) fine += PENALTY_MISSING_TIME_RECORD_PHP;
-    if (!String(n.timeOut ?? "").trim()) fine += PENALTY_MISSING_TIME_RECORD_PHP;
+    if (!timeInOnly && !String(n.timeOut ?? "").trim()) {
+      fine += PENALTY_MISSING_TIME_RECORD_PHP;
+    }
     return fine;
   }
-  const slots = [n.amTimeIn, n.amTimeOut, n.pmTimeIn, n.pmTimeOut];
+  const slots = timeInOnly
+    ? [n.amTimeIn, n.pmTimeIn]
+    : [n.amTimeIn, n.amTimeOut, n.pmTimeIn, n.pmTimeOut];
   return slots.reduce(
     (acc, v) => acc + (!String(v ?? "").trim() ? PENALTY_MISSING_TIME_RECORD_PHP : 0),
     0,
@@ -451,6 +476,19 @@ function TimeSlot({ value }: TimeSlotProps) {
       No record
     </span>
   );
+}
+
+function TimeOutSlot({
+  value,
+  timeInOnly,
+}: {
+  value?: string | null;
+  timeInOnly?: boolean;
+}) {
+  if (timeInOnly) {
+    return <span className="text-xs text-black/55">—</span>;
+  }
+  return <TimeSlot value={value} />;
 }
 
 function getHistorySessionKey(ev: StudentHistoryEvent) {
@@ -1039,15 +1077,15 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
 
         <div className="min-w-0 overflow-x-auto">
           <table className={`w-full min-w-0 table-fixed text-sm ${TABLE_CELL_NOWRAP}`}>
-            <thead className={`border-b border-[#07713c]/30 bg-[#07713c] text-xs uppercase tracking-wide ${STUDENTS_TH_TEXT}`}>
+            <thead className={`border-b border-[#07713c]/30 bg-[#07713c] text-left text-xs uppercase tracking-wide ${STUDENTS_TH_TEXT}`}>
               <tr>
                 <th className="w-[14%] px-3 py-2.5 text-left align-middle">Student ID</th>
                 <th className="w-[26%] px-3 py-2.5 text-left align-middle">Name</th>
                 <th className="w-[30%] px-3 py-2.5 text-left align-middle">Department</th>
-                <th className="w-[12%] px-3 py-2.5 text-center align-middle tabular-nums">Year level</th>
-                <th className="hidden w-[10%] px-3 py-2.5 text-center align-middle tabular-nums">Attendance</th>
+                <th className="w-[12%] px-3 py-2.5 text-left align-middle tabular-nums">Year level</th>
+                <th className="hidden w-[10%] px-3 py-2.5 text-left align-middle tabular-nums">Attendance</th>
                 <th className="hidden px-3 py-2.5 text-left align-middle">Status</th>
-                <th className="hidden px-3 py-2.5 text-center align-middle">Select</th>
+                <th className="hidden px-3 py-2.5 text-left align-middle">Select</th>
               </tr>
             </thead>
             <tbody>
@@ -1076,10 +1114,10 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                     <td className="px-3 py-1.5 text-left leading-snug text-black truncate" title={getStudentDepartmentLabel(s)}>
                       {getStudentDepartmentLabel(s)}
                     </td>
-                    <td className="px-3 py-1.5 text-center tabular-nums leading-snug text-black">
+                    <td className="px-3 py-1.5 text-left tabular-nums leading-snug text-black">
                       {rowYl != null ? rowYl : "—"}
                     </td>
-                    <td className="hidden px-3 py-1.5 text-center tabular-nums font-semibold leading-snug text-black whitespace-nowrap">
+                    <td className="hidden px-3 py-1.5 text-left tabular-nums font-semibold leading-snug text-black whitespace-nowrap">
                       {s.attendanceRate}%
                     </td>
                     <td className="hidden px-3 py-1.5 text-left">
@@ -1088,7 +1126,7 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                         <span className="text-black">{t.label}</span>
                       </span>
                     </td>
-                    <td className="hidden px-3 py-1.5 text-center">
+                    <td className="hidden px-3 py-1.5 text-left">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -1257,6 +1295,7 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                   paginatedEventHistory.map((ev, i) => {
                     const row = normalizeHistoryEvent(ev);
                     const fine = getEventFinePhp(ev);
+                    const timeInOnly = isHistoryTimeInOnly(ev);
                     const isHalf = row.sessionType !== "Whole day";
                     const sessionLabel = getHistorySessionLabel(ev, row);
                     const halfDayPeriod = isHalf ? getHalfDayAmPm(ev) : null;
@@ -1283,7 +1322,10 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                                 <TimeSlot value={isHalf ? row.timeIn : row.pmTimeIn} />
                               </td>
                               <td className="px-3 py-2.5 text-center">
-                                <TimeSlot value={isHalf ? row.timeOut : row.pmTimeOut} />
+                                <TimeOutSlot
+                                  timeInOnly={timeInOnly}
+                                  value={isHalf ? row.timeOut : row.pmTimeOut}
+                                />
                               </td>
                             </>
                           ) : (
@@ -1292,7 +1334,10 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                                 <TimeSlot value={isHalf ? row.timeIn : row.amTimeIn} />
                               </td>
                               <td className="px-3 py-2.5 text-center">
-                                <TimeSlot value={isHalf ? row.timeOut : row.amTimeOut} />
+                                <TimeOutSlot
+                                  timeInOnly={timeInOnly}
+                                  value={isHalf ? row.timeOut : row.amTimeOut}
+                                />
                               </td>
                             </>
                           )
@@ -1305,7 +1350,7 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                                 <TimeSlot value={row.timeIn} />
                               </td>
                               <td className="px-3 py-2.5 text-center">
-                                <TimeSlot value={row.timeOut} />
+                                <TimeOutSlot timeInOnly={timeInOnly} value={row.timeOut} />
                               </td>
                             </>
                           ) : (
@@ -1314,7 +1359,7 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                                 <TimeSlot value={row.timeIn} />
                               </td>
                               <td className="px-3 py-2.5 text-center">
-                                <TimeSlot value={row.timeOut} />
+                                <TimeOutSlot timeInOnly={timeInOnly} value={row.timeOut} />
                               </td>
                               <td className="border-l border-[#07713c]/30 px-3 py-2.5 text-center">{emptyTimeCell}</td>
                               <td className="px-3 py-2.5 text-center">{emptyTimeCell}</td>
@@ -1326,13 +1371,13 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                               <TimeSlot value={row.amTimeIn} />
                             </td>
                             <td className="px-3 py-2.5 text-center">
-                              <TimeSlot value={row.amTimeOut} />
+                              <TimeOutSlot timeInOnly={timeInOnly} value={row.amTimeOut} />
                             </td>
                             <td className="border-l border-[#07713c]/30 px-3 py-2.5 text-center">
                               <TimeSlot value={row.pmTimeIn} />
                             </td>
                             <td className="px-3 py-2.5 text-center">
-                              <TimeSlot value={row.pmTimeOut} />
+                              <TimeOutSlot timeInOnly={timeInOnly} value={row.pmTimeOut} />
                             </td>
                           </>
                         )}
@@ -1716,6 +1761,7 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                       paginatedEventHistory.map((ev, i) => {
                         const row = normalizeHistoryEvent(ev);
                         const fine = getEventFinePhp(ev);
+                        const timeInOnly = isHistoryTimeInOnly(ev);
                         const isHalf = row.sessionType !== "Whole day";
                         const sessionLabel = getHistorySessionLabel(ev, row);
                         const halfDayPeriod = isHalf ? getHalfDayAmPm(ev) : null;
@@ -1742,7 +1788,10 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                                     <TimeSlot value={isHalf ? row.timeIn : row.pmTimeIn} />
                                   </td>
                                   <td className="px-3 py-2.5 text-center">
-                                    <TimeSlot value={isHalf ? row.timeOut : row.pmTimeOut} />
+                                    <TimeOutSlot
+                                      timeInOnly={timeInOnly}
+                                      value={isHalf ? row.timeOut : row.pmTimeOut}
+                                    />
                                   </td>
                                 </>
                               ) : (
@@ -1751,7 +1800,10 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                                     <TimeSlot value={isHalf ? row.timeIn : row.amTimeIn} />
                                   </td>
                                   <td className="px-3 py-2.5 text-center">
-                                    <TimeSlot value={isHalf ? row.timeOut : row.amTimeOut} />
+                                    <TimeOutSlot
+                                      timeInOnly={timeInOnly}
+                                      value={isHalf ? row.timeOut : row.amTimeOut}
+                                    />
                                   </td>
                                 </>
                               )
@@ -1764,7 +1816,7 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                                     <TimeSlot value={row.timeIn} />
                                   </td>
                                   <td className="px-3 py-2.5 text-center">
-                                    <TimeSlot value={row.timeOut} />
+                                    <TimeOutSlot timeInOnly={timeInOnly} value={row.timeOut} />
                                   </td>
                                 </>
                               ) : (
@@ -1773,7 +1825,7 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                                     <TimeSlot value={row.timeIn} />
                                   </td>
                                   <td className="px-3 py-2.5 text-center">
-                                    <TimeSlot value={row.timeOut} />
+                                    <TimeOutSlot timeInOnly={timeInOnly} value={row.timeOut} />
                                   </td>
                                   <td className="border-l border-[#07713c]/30 px-3 py-2.5 text-center">{emptyTimeCell}</td>
                                   <td className="px-3 py-2.5 text-center">{emptyTimeCell}</td>
@@ -1785,13 +1837,13 @@ export default function StudentAttendanceDashboard({ onRegisterExportOpen }: Stu
                                   <TimeSlot value={row.amTimeIn} />
                                 </td>
                                 <td className="px-3 py-2.5 text-center">
-                                  <TimeSlot value={row.amTimeOut} />
+                                  <TimeOutSlot timeInOnly={timeInOnly} value={row.amTimeOut} />
                                 </td>
                                 <td className="border-l border-[#07713c]/30 px-3 py-2.5 text-center">
                                   <TimeSlot value={row.pmTimeIn} />
                                 </td>
                                 <td className="px-3 py-2.5 text-center">
-                                  <TimeSlot value={row.pmTimeOut} />
+                                  <TimeOutSlot timeInOnly={timeInOnly} value={row.pmTimeOut} />
                                 </td>
                               </>
                             )}

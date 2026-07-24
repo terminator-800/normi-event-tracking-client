@@ -3,8 +3,8 @@ import { useLocation } from "react-router-dom";
 import { useGetEvents, selectActiveOrUpcomingEvent } from "../hooks/useGetEvents";
 import EventSummaryStrip from "./EventSummaryStrip";
 import SidebarNavIcon from "./SidebarNavIcon";
+import SidebarUserFullName from "./SidebarUserFullName";
 import { SHOW_DASHBOARD_IN_NAV } from "../utils/appNav";
-import UserCircleIcon from "./UserCircleIcon";
 import type { DeskPageProps } from "../types/desk-pages";
 
 type CollegeCourse = { key: string; label: string };
@@ -129,9 +129,6 @@ export default function UserDashboard({ onLogout, onNavigate }: DeskPageProps) {
   const { data: apiEvents = [] } = useGetEvents();
   const currentEvent = useMemo(() => selectActiveOrUpcomingEvent(apiEvents), [apiEvents]);
 
-  const [showLogout, setShowLogout] = useState(false);
-  const role = (localStorage.getItem("csg_role") || "user").toLowerCase();
-
   const [step, setStep] = useState(1); // 1..4
   const [selectedCollegeKey, setSelectedCollegeKey] = useState<string | null>(null);
   const [selectedCourseKey, setSelectedCourseKey] = useState<string | null>(null);
@@ -145,10 +142,6 @@ export default function UserDashboard({ onLogout, onNavigate }: DeskPageProps) {
     timeIn: "",
     timeOut: "",
   });
-
-  useEffect(() => {
-    setShowLogout(false);
-  }, [role]);
 
   useEffect(() => {
     const key =
@@ -225,37 +218,110 @@ export default function UserDashboard({ onLogout, onNavigate }: DeskPageProps) {
             </button>
           ) : null}
 
-          <button
-            onClick={() => onNavigate?.("events")}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
-              SHOW_DASHBOARD_IN_NAV ? "text-green-100 hover:bg-white/15" : "bg-[#055a2e] text-white"
-            }`}
-          >
-            <SidebarNavIcon navId="events" />
-            Events
-          </button>
+          <div className="space-y-1">
+            <div className="flex w-full items-center gap-3 rounded-lg bg-white/10 px-4 py-3 text-left text-sm font-medium text-white">
+              <SidebarNavIcon navId="manage_event" />
+              <span className="min-w-0 flex-1 truncate">Manage Event</span>
+            </div>
+            <div className="ml-3 space-y-1 border-l border-white/20 pl-2">
+              <button
+                onClick={() => onNavigate?.("manage_events")}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
+              >
+                <SidebarNavIcon navId="manage_events" />
+                Create Event
+              </button>
+              <button
+                onClick={() => onNavigate?.("events")}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors ${
+                  SHOW_DASHBOARD_IN_NAV ? "text-green-100 hover:bg-white/15" : "bg-[#055a2e] text-white"
+                }`}
+              >
+                <SidebarNavIcon navId="events" />
+                List Events
+              </button>
+            </div>
+          </div>
 
-          <button
-            type="button"
-            onClick={() => onNavigate?.("students")}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
-          >
-            <SidebarNavIcon navId="students" />
-            Students
-          </button>
+          <div className="space-y-1">
+            <div className="flex w-full items-center gap-3 rounded-lg bg-white/10 px-4 py-3 text-left text-sm font-medium text-white">
+              <SidebarNavIcon navId="students_nav" />
+              <span className="min-w-0 flex-1 truncate">Student</span>
+            </div>
+            <div className="ml-3 space-y-1 border-l border-white/20 pl-2">
+              <button
+                type="button"
+                onClick={() => onNavigate?.("students")}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
+              >
+                <SidebarNavIcon navId="students" />
+                List
+              </button>
+            </div>
+          </div>
 
-          <button
-            onClick={() => onNavigate?.("manage_events")}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
-          >
-            <SidebarNavIcon navId="manage_events" />
-            Manage Event
-          </button>
+          <div className="space-y-1">
+            <div className="flex w-full items-center gap-3 rounded-lg bg-white/10 px-4 py-3 text-left text-sm font-medium text-white">
+              <SidebarNavIcon navId="reports_nav" />
+              <span className="min-w-0 flex-1 truncate">Reports</span>
+            </div>
+            <div className="ml-3 space-y-1 border-l border-white/20 pl-2">
+              <button
+                type="button"
+                onClick={() => onNavigate?.("reports_attendance")}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
+              >
+                <SidebarNavIcon navId="reports_attendance" />
+                Event Attendance
+              </button>
+              <div className="space-y-1">
+                <div className="flex w-full items-center gap-3 rounded-lg bg-white/10 px-4 py-3 text-left text-sm font-medium text-white">
+                  <SidebarNavIcon navId="reports_collection_nav" />
+                  <span className="min-w-0 flex-1 truncate">Receivables</span>
+                </div>
+                <div className="ml-3 space-y-1 border-l border-white/20 pl-2">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.("reports_collection_all")}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
+                  >
+                    <SidebarNavIcon navId="reports_collection_all" />
+                    Collections
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.("reports_collection")}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
+                  >
+                    <SidebarNavIcon navId="reports_collection" />
+                    Cash Received
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.("reports_collection_partial")}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
+                  >
+                    <SidebarNavIcon navId="reports_collection_partial" />
+                    Partial Payments
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.("reports_collection_unpaid")}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left text-sm font-medium transition-colors text-green-100 hover:bg-white/15"
+                  >
+                    <SidebarNavIcon navId="reports_collection_unpaid" />
+                    Accounts Receivable
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </nav>
+        <SidebarUserFullName onLogout={onLogout} />
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <header className="bg-white border-b border-gray-200 px-6 py-4">
           <div>
             <h1 className="text-[30px] font-extrabold font-[Inter,sans-serif] text-[#008000] leading-tight">
               SELECT DEPARTMENT
@@ -263,35 +329,6 @@ export default function UserDashboard({ onLogout, onNavigate }: DeskPageProps) {
             <p className="text-xs text-gray-500">
               Choose Your College To Log Your Attendance
             </p>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowLogout((prev) => !prev)}
-                className="inline-flex h-11 w-11 items-center justify-center text-[#008000] rounded-lg hover:bg-green-50"
-                aria-label="Account menu"
-                aria-expanded={showLogout}
-                aria-haspopup="true"
-              >
-                <UserCircleIcon />
-              </button>
-
-              {showLogout && (
-                <div className="absolute right-0 top-full mt-1 py-1 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[100px]">
-                  <button
-                    onClick={() => {
-                      setShowLogout(false);
-                      onLogout?.();
-                    }}
-                    className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                  >
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
           </div>
         </header>
 
