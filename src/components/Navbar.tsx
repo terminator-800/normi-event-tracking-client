@@ -28,17 +28,14 @@ export default function Navbar({ showSettings = false }: NavbarProps) {
         <div className="flex items-center h-16 sm:h-18 md:h-20">
           <Link
             to="/"
-            className="flex items-center gap-3 rounded-lg hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#07713c]/40"
+            className="flex items-center rounded-lg hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#07713c]/40"
             aria-label="Go to home page"
           >
             <img
-              src="/logo.png"
+              src="/logo2.png"
               alt="Northern Mindanao Colleges, Inc."
-              className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-contain object-center"
+              className="h-11 w-auto max-w-[min(100%,280px)] object-contain object-left sm:h-14 sm:max-w-[360px]"
             />
-            <span className="hidden sm:inline text-base sm:text-lg md:text-xl font-semibold text-green-800 whitespace-nowrap font-[Inter,sans-serif]">
-                Northern Mindanao Colleges, Inc.
-            </span>
           </Link>
           {showSettings && (
             <div className="absolute right-4 sm:right-6 lg:right-8 top-1/2 -translate-y-1/2" ref={settingsMenuRef}>

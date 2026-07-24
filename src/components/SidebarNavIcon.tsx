@@ -71,6 +71,29 @@ function IconPayment(props: IconProps) {
   );
 }
 
+function IconCashier(props: IconProps) {
+  return (
+    <svg {...common} {...props}>
+      <rect x="3" y="8" width="18" height="12" rx="2" />
+      <path d="M7 8V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2" />
+      <path d="M3 13h18" />
+      <circle cx="8" cy="16.5" r="1" fill="currentColor" stroke="none" />
+      <path d="M12 15.5h6" />
+    </svg>
+  );
+}
+
+function IconPaymentStation(props: IconProps) {
+  return (
+    <svg {...common} {...props}>
+      <rect x="5" y="3" width="14" height="18" rx="2" />
+      <path d="M9 7h6" />
+      <path d="M9 11h6" />
+      <circle cx="12" cy="16.5" r="1.5" />
+    </svg>
+  );
+}
+
 function IconImport(props: IconProps) {
   return (
     <svg {...common} {...props}>
@@ -164,21 +187,47 @@ function IconExportSecurity(props: IconProps) {
   );
 }
 
+function IconBackup(props: IconProps) {
+  return (
+    <svg {...common} {...props}>
+      <path d="M4 7h16v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" />
+      <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M12 11v5" />
+      <path d="M9.5 14.5L12 17l2.5-2.5" />
+    </svg>
+  );
+}
+
 const MAP = {
   dashboard: IconDashboard,
+  manage_event: IconEvents,
   events: IconAnalytics,
   students: IconStudents,
+  students_nav: IconStudents,
+  cashier: IconCashier,
   payment: IconPayment,
+  payment_station: IconPaymentStation,
   manage_events: IconEvents,
   import: IconImport,
   users: IconUsers,
+  users_nav: IconUsers,
   academic_settings: IconAcademicSettings,
+  settings: IconSystemSettings,
+  reports_nav: IconReports,
+  reports_attendance: IconAnalytics,
+  reports_collection_nav: IconPayment,
+  reports_collection: IconPayment,
+  reports_collection_all: IconPayment,
+  reports_collection_unpaid: IconPayment,
+  reports_collection_partial: IconPayment,
   admin_management: IconAdminManagement,
   roles_permissions: IconRolesPermissions,
+  roles_list: IconUsers,
   system_settings: IconSystemSettings,
   audit_logs: IconAuditLogs,
   reports: IconReports,
   export_security: IconExportSecurity,
+  backup: IconBackup,
 } as const;
 
 export type SidebarNavId = AppNavId;
